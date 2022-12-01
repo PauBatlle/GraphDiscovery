@@ -23,7 +23,7 @@ def build_graph(X, ks, nugget, possible_edges = None, γ1 = 0.5, γ2 = 0.5, name
     γ2 (Default = 0.5): Threshold to detect particular ancestors. Edge to j -> i is removed iff E_without_j > γ2*(E_without_j+E_with_j):
     names (Default = None): The names of the nodes in the graph, for printing and visualization purposes
     verbose (Default = False): Whether to print intermediate results
-    plot (Default = False): Whether to plot at the end
+    plot (Default = False): Whether to plot the graph at the end
 
     Outputs:
 
@@ -55,7 +55,7 @@ def build_graph(X, ks, nugget, possible_edges = None, γ1 = 0.5, γ2 = 0.5, name
         v = np.linalg.solve(nuggeted_matrix, Ys) #v = K(X,X)^-1 Y
         E_1 = v.T @ Kxx @ v #E_i = Y^T K(X,X)^-1 K_i(X,X) K(X,X)^-1 Y = v^T K_i(X,X) v 
         E_2 = v.T @ np.eye(len(Kxx))*nugget @ v
-        if verbose: print('Node {0}, E_Signal = {1}, E_Noise = {2}'.format(names[i], E_1, E_2))
+        if verbose: print('Node {0}, E_Signal = {1:.4f}, E_Noise = {2:.4f}'.format(names[i], E_1, E_2))
         if E_1 < γ1*(E_2+E_1):
             if verbose: print('Node {0} does not have any ancestors'.format(names[i]))
             for j in possible_ancestors:
@@ -68,8 +68,8 @@ def build_graph(X, ks, nugget, possible_edges = None, γ1 = 0.5, γ2 = 0.5, name
                 E1j = v.T @ Maux @ v
                 E2j = v.T @ np.multiply(Maux,(Ms[j]-1))@v
                 #Actually E2j is just E_1 - E_1j, but this is here for debugging/understanding purposes
-                if verbose: print('Decomposing E_signal = {0} in without {1} = {2} and with {1} = {3}'.format(E_1, names[j], E1j, E2j))
-                if verbose: print('Noise/Signal Energy Ratio: {0}'.format(E1j/(E2j+E1j)))
+                if verbose: print('Decomposing E_signal = {0:.4f} in without {1} = {2:.4f} and with {1} = {3:.4f}'.format(E_1, names[j], E1j, E2j))
+                if verbose: print('Noise/Signal Energy Ratio: {0:.4f}'.format(E1j/(E2j+E1j)))
                 if E1j > γ2*(E2j+E1j):
                     G.remove_edge(j, i)
                     
