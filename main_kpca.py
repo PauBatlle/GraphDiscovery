@@ -53,5 +53,5 @@ x1s = np.linspace(-2,2,100)
 x2s = x1s**2 + 1 + onp.random.normal(size = 100)*1e-1
 x3s = (x1s + 2)**3 + onp.random.normal(size = 100)*1e-1
 X = np.array([x1s, x2s, x3s])
-kpca.build_graph(X, ks, gamma=1e-10, gamma2=1e-2, gamma3=1e-4, epsilon=1e-8, tau1=0.5, tau2=0.5, names=['x1', 'x2', 'x3'], noise_scale=1e-1, verbose=True, plot=True)
+kpca.build_graph(X, ks, gamma=1e-5, gamma2=1e-2, gamma3=1e-3, epsilon=1e-4, tau1=0.5, tau2=0.5, names=['x1', 'x2', 'x3'], noise_scale=1e-1, verbose=True, plot=True)
 plt.show()

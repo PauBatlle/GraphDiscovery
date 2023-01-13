@@ -17,7 +17,6 @@ import jaxopt as jopt
 from kernels import *
 from scipy.linalg import svd
 config.update("jax_enable_x64", True)
-config.update('jax_disable_jit', True)
 
 def solve_svd(A, b):
     # compute svd of A
@@ -99,10 +98,10 @@ class KPCA(object):
 
         lz = jsp.linalg.solve_triangular(L, z, lower=True)
         #lz = np.linalg.solve(Theta, z)
-        loss1 = beta0 ** 2 + np.dot(beta, beta) + np.dot(B, B) / gamma2 + np.dot(lz, lz) / gamma3
-        # cts = np.diag(np.sqrt(Lambdas)) @ (alphas @ (f0x + f1x + f2x + f3x))
-        cts = np.diag(Lambdas) @ (alphas @ (f0x + f1x + f2x + f3x))
-        loss2 = np.dot(cts, cts) / gamma
+        loss1 = gamma * beta0 ** 2 + gamma * np.dot(beta, beta) + gamma / gamma2 * np.dot(B, B)  + gamma / gamma3 * np.dot(lz, lz)
+        #cts = np.diag(np.sqrt(Lambdas)) @ (alphas @ (f0x + f1x + f2x + f3x))
+        cts = np.diag(Lambdas ** (3/2))  @ (alphas @ (f0x + f1x + f2x + f3x))
+        loss2 = np.dot(cts, cts) #/ gamma
         return (loss1 + loss2) / 2
 
     def constrained_loss(self, params, unpack_func, gamma, gamma2, gamma3, XT, alphas, Lambdas, L):
@@ -230,12 +229,14 @@ class KPCA(object):
 
                 params_size = N + 1 + (d - 1) + d ** 2 - d - (d - 1)
                 params0 = np.zeros(params_size)
-                H = hessian(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
-                b = grad(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
-                params = np.linalg.solve(H, -b)
+                H_i = hessian(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
+                b_i = grad(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
+                #LH = jsp.linalg.cholesky(H + 1e-8 * np.eye(len(H)))
+                #_params = jsp.linalg.solve_triangular(LH.T, jsp.linalg.solve_triangular(LH, -b, lower=True), lower=False)
+                params_i = solve_svd(H_i, -b_i)
                 #Since H is ill-conditioned, params is not accurate. We need a robust linear solver
                 #Even solve_svd is not accurate enough
-                loss_i = self.constrained_loss(params, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
+                loss_i = self.constrained_loss(params_i, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
 
                 if verbose: print("Energy of Node {} is {}".format(names[i], loss_i))
                 # Then, we start to identify which nodes can be viewed as an ancestor of the ith node
@@ -286,10 +287,11 @@ class KPCA(object):
 
                     params_size = N + 1 + (d - 2) + d ** 2 - d - (d - 1) - (d - 1) - (d - 2)
                     params0 = np.zeros(params_size)
-                    H = hessian(self.constrained_loss)(params0, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
-                    b = grad(self.constrained_loss)(params0, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
-                    params = np.linalg.solve(H, -b)
-                    loss_ij = self.constrained_loss(params, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
+                    H_ij = hessian(self.constrained_loss)(params0, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
+                    b_ij = grad(self.constrained_loss)(params0, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
+                    #params = np.linalg.solve(H, -b)
+                    params_ij = solve_svd(H_ij, -b_ij)
+                    loss_ij = self.constrained_loss(params_ij, unpack_params_ij, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mimj)
 
                     if verbose: print("Energy of Node {} after eliminating Node {} is {}".format(names[i], names[j], loss_ij))
                     if verbose: print("The ratio is {}".format((loss_ij - loss_i)/loss_i))
