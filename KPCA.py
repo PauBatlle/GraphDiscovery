@@ -1,22 +1,13 @@
 #File with the main functions of graph discovery
-import jax
-import numpy as onp
-import jax.numpy as np
 from jax import jit, vmap, grad, hessian
-from jax.config import config
-from jax.scipy.linalg import cho_factor, cho_solve
 import jax.scipy as jsp
-from functools import reduce
 from scipy.optimize import minimize
 import networkx as nx
-from itertools import count
-import matplotlib.pyplot as plt
-from functools import partial
-from jax import jit
-import jaxopt as jopt
 from kernels import *
 from scipy.linalg import svd
+from jax.config import config
 config.update("jax_enable_x64", True)
+
 
 def solve_svd(A, b):
     # compute svd of A
@@ -100,7 +91,12 @@ class KPCA(object):
         #lz = np.linalg.solve(Theta, z)
         loss1 = gamma * beta0 ** 2 + gamma * np.dot(beta, beta) + gamma / gamma2 * np.dot(B, B)  + gamma / gamma3 * np.dot(lz, lz)
         #cts = np.diag(np.sqrt(Lambdas)) @ (alphas @ (f0x + f1x + f2x + f3x))
-        cts = np.diag(Lambdas ** (3/2))  @ (alphas @ (f0x + f1x + f2x + f3x))
+        # cts = np.diag(Lambdas ** (3/2))  @ (alphas @ (f0x + f1x + f2x + f3x))
+        # cts = (Lambdas ** (3 / 2)) * (alphas @ (f0x + f1x + f2x + f3x))
+        cts = alphas @ (f0x + f1x + f2x + f3x)
+        #cts = (alphas @ (f0x + f1x + f2x + f3x))
+        # cts = (Lambdas ** (3/2)) * (XT[0].dot(Bmtx.dot(XT[0])))
+        #cts = (Lambdas) * (XT[0].dot(Bmtx.dot(XT[0])))
         loss2 = np.dot(cts, cts) #/ gamma
         return (loss1 + loss2) / 2
 
@@ -141,7 +137,7 @@ class KPCA(object):
 
         Kxx = Gamma12 + gamma3 * Gamma3
         # compute sorted eigenvalues and eigenfunctions of Kxx
-        eigenValues, eigenVectors = np.linalg.eig(Kxx)
+        eigenValues, eigenVectors = np.linalg.eigh(Kxx)
         idx = np.argsort(-eigenValues.real)
         lambdas = eigenValues[idx].real
         alphas = eigenVectors[:, idx].real
@@ -229,10 +225,13 @@ class KPCA(object):
 
                 params_size = N + 1 + (d - 1) + d ** 2 - d - (d - 1)
                 params0 = np.zeros(params_size)
+
+                __ = self.constrained_loss(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
+
                 H_i = hessian(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
                 b_i = grad(self.constrained_loss)(params0, unpack_params_i, gamma, gamma2, gamma3, X.T, alphas, lambdas[:r], L_Gamma3mi)
-                #LH = jsp.linalg.cholesky(H + 1e-8 * np.eye(len(H)))
-                #_params = jsp.linalg.solve_triangular(LH.T, jsp.linalg.solve_triangular(LH, -b, lower=True), lower=False)
+                #LH_i = jsp.linalg.cholesky(H_i + 1e-8 * np.eye(len(H_i)))
+                #_params = jsp.linalg.solve_triangular(LH_i.T, jsp.linalg.solve_triangular(LH_i, -b_i, lower=True), lower=False)
                 params_i = solve_svd(H_i, -b_i)
                 #Since H is ill-conditioned, params is not accurate. We need a robust linear solver
                 #Even solve_svd is not accurate enough
@@ -346,7 +345,7 @@ class KPCA(object):
 
         Kxx = Gamma12 + gamma3 * Gamma3
         # compute sorted eigenvalues and eigenfunctions of Kxx
-        eigenValues, eigenVectors = np.linalg.eig(Kxx)
+        eigenValues, eigenVectors = np.linalg.eigh(Kxx)
         idx = np.argsort(-eigenValues.real)
         lambdas = eigenValues[idx].real
         alphas = eigenVectors[:, idx].real
