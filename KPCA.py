@@ -244,6 +244,8 @@ class KPCA(object):
                     # We add extra constraints to remove the dependence of the ith node on the jth node
                     other_nodes = np.setdiff1d(np.array(range(d)), np.array([i, j]))
                     other_Ms = [Ms[k] for k in other_nodes.tolist()]
+                    if 0 == len(other_Ms):
+                        continue
                     Gamma3mimj = reduce(np.multiply, other_Ms) #Use multiplication instead of division below seems to be more stable
                     #Gamma3mimj = np.divide(Gamma3mi, Ms[j])  # The gram matrix associated with the kernel without the ith kernel
                     L_Gamma3mimj = np.linalg.cholesky(Gamma3mimj + nugget * np.eye(len(Gamma3mimj)))
