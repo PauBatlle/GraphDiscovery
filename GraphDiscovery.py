@@ -89,7 +89,7 @@ class GraphDiscovery(object):
 
     def discovery_in_graph(self, X, ks, gamma, G, names, examing_nodes, beta1=1e-1, beta2=1e-2, beta3=1e-3, epsilon=1e-3, verbose=False):
         """
-        The main build_graph function, built on top of a networkx directed graph (DiGraph) G
+        Discover relations in a graph for given nodes, built on top of a networkx directed graph (DiGraph) G
 
         Inputs:
 
@@ -99,6 +99,12 @@ class GraphDiscovery(object):
             Array of kernels, one for each node;
         gamma:      positive real
             The regularization constant for the constraints
+        G:          graph
+            The pre-built graph, which already contains some relations
+        names:      list
+            List of names of nodes in G
+        examing_nodes   list
+            List of nodes in G to be examined
         beta1:      positive real
             The penalization on the linear kernel
         beta2:      positive real
@@ -107,12 +113,8 @@ class GraphDiscovery(object):
             The penalization on the fully nonlinear kernel
         epsilon:    positive real
             The threshold to determine the number of eigenvalues selected
-        names (Default = None): list
-            The names of the nodes in the graph, for printing and visualization purposes
         verbose (Default = False): Bool
             Whether to print intermediate results
-        plot (Default = False): Bool
-            Whether to plot the graph at the end
 
         Outputs:
 
