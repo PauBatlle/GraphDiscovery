@@ -269,14 +269,12 @@ class GraphDiscovery(object):
             weights_i = np.dot(M, yb)
             weights_i = weights_i * coeffs
             # print the equation representing x_i as the function of other variables
-            if verbose: print("Node {} as a function of other nodes".format(names[i]))
-            eq = "{}".format(names[i])
-            count = 0
-            for mode in modes_b:
-                eq = eq + ' + '
-                eq = eq + "({} {})".format(weights_i[count], mode.to_string())
-                count = count + 1
-            eq = eq + ' = 0'
+            if verbose: print(f"Node {names[i]} as a function of other nodes")
+            eq = f"{names[i]} = "
+            for count,mode in enumerate(modes_b):
+                eq = eq + f"{-round(weights_i[count], 2)} * {mode.to_string()} + "
+            eq=eq[:-2]
+            
             if verbose: print(eq)
             if verbose: print("")
 
