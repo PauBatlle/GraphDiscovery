@@ -22,7 +22,7 @@ G = nx.relabel_nodes(G, dict(zip(range(d), names)))
 examing_nodes = np.array([0, 1, 2])
 
 x1s = np.linspace(-2, 2,100)
-x3s = x1s ** 2 #+ onp.random.normal(size = 100)*1e-1
+x3s = x1s #+ onp.random.normal(size = 100)*1e-1
 x2s = (-1 - x1s - 3 * x3s)/2 #+ onp.random.normal(size = 100)*1e-1
 
 # x1s = np.linspace(-2, 2,100)
