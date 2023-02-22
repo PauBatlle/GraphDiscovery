@@ -22,7 +22,7 @@ class ConstantMode(Mode):
     """
     Represent the constant kernel, K(x, y) = beta
     """
-    def __init__(self, nodes=np.array([]), names=np.array([]), beta=1):
+    def __init__(self, nodes=np.array([0]), names=np.array([]), beta=1):
         super().__init__(nodes, names, beta)
 
     def kappa(self, x, y):

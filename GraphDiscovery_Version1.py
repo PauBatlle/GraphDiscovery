@@ -224,139 +224,131 @@ class GraphDiscovery(object):
             # status == True means that there is a signal given the constraint. Then, activations contains the
             # activation (the ratio of the energy of each mode and the total energy) of each mode
             status, activations, yb = self.energy_estimate(gamma, varphi_ga, Kbis_varphi_varphi)
+            activated_modes_indices = modes_b_indices # Record the indices of activated modes of Class b. The indices index the array of modes
+            if not status: activated_modes_indices = np.array([])
             # If status == True, node i has ancestors. We need to determine the ancestors of node i.
-            nodes_ac = np.setdiff1d(np.array(range(d+1)), np.array([i])) # the ancestor candidates (acronym ac)
-            modes_ac = modes_b_indices.copy()
-            if not status: nodes_ac = np.array([])
-            _activations = activations.copy()
-            while status and (len(nodes_ac) > 1):
-                energies = onp.zeros(len(nodes_ac))
-                for iter in range(len(nodes_ac)):
-                    j = nodes_ac[iter]
+            if status:
+                # We first sum the activations associated with each node and compute its whole energy and keep it in a list
+                other_nodes = np.setdiff1d(np.array(range(d+1)), np.array([i]))
+                energies = onp.zeros(len(other_nodes))
+                for iter in range(len(other_nodes)):
+                    j = other_nodes[iter]
                     # The indices of activated modes associated with node j. The indices are numbered according to the array of modes
                     modes_j = onp.where(correspondence_mtx[:, j] == 1)[0]
-                    activated_modes_j = set(modes_j).intersection(set(modes_b_indices))
-                    # The indices of activations associated with mode j. The indices are numbered according to the aray _activations
-                    activation_indices_j = onp.where(onp.isin(modes_ac, list(activated_modes_j)))[0]
+                    activated_modes_j = set(modes_j).intersection(set(activated_modes_indices))
+                    # The indices of activations associated with mode j. The indices are numbered according to the aray activations
+                    activation_indices_j = onp.where(onp.isin(activated_modes_indices, list(activated_modes_j)))[0]
                     # Compute the sum of activations associated with mode j
-                    energies[iter] = np.sum(_activations[activation_indices_j])
+                    energies[iter] = np.sum(activations[activation_indices_j])
 
-                # We sort the energies in an ascending order
-                sorted_energies_indices = onp.argsort(energies)
-                # Preclude one ancestor candidate from the list
-                # We do not preclude the constant node
-                pre_nodes_ac = nodes_ac[sorted_energies_indices]
-                # if pre_nodes_ac[0] == 0:
-                #     pre_nodes_ac = onp.concatenate((onp.array([0]), pre_nodes_ac[2:]))
-                # else:
-                #     pre_nodes_ac = pre_nodes_ac[1:]
-                pre_nodes_ac = pre_nodes_ac[1:]
+                # We sort the energies in a descending order
+                sorted_energies_indices = np.argsort(-energies)
+                # Get indices of nodes sorted in an energy descending order
+                descending_nodes_indices = other_nodes[sorted_energies_indices]
 
-                # Next, we get all the activated modes associated with the ancestor candidates
-                pre_modes_ac = onp.array([], onp.int64)
-                for s in pre_nodes_ac:
-                    # The indices of activated modes associated with the potential ancestor s.
-                    # The indices are numbered according to the array of modes
-                    modes_s = onp.where(correspondence_mtx[:, s] == 1)[0]
-                    activated_modes_s = set(modes_s).intersection(set(modes_b_indices))
-                    pre_modes_ac = onp.concatenate((pre_modes_ac, onp.array(list(activated_modes_s))))
-                pre_modes_ac = onp.array(list(set(pre_modes_ac))).astype(onp.int64)
-                # We filter out the modes that related to other nodes except nodes in pre_nodes_ac
-                valid_modes_ac = []
-                for k in range(len(pre_modes_ac)):
-                    mode_ac = pre_modes_ac[k]
-                    node_ac = modes[mode_ac].nodes + 1
-                    validation_list = np.setdiff1d(node_ac, pre_nodes_ac)
-                    if len(validation_list) == 0:
-                        valid_modes_ac.append(k)
-                pre_modes_ac = pre_modes_ac[onp.array(valid_modes_ac).astype(onp.int64)]
-                # Now, pre_modes_ac contains modes related only to nodes in pre_nodes_ac
+                for iter in  range(len(other_nodes)):
+                    # Get a list of potential ancestors with the highest energies
+                    ancestor_candidates = descending_nodes_indices[:iter+1]
+                    # Next, we check whether node i can be expressed as functions of ancestor candidates
+                    # First, we get all the activated modes associated with the ancestor candidates (acronym ac)
+                    modes_ac = onp.array([], onp.int64)
+                    for s in ancestor_candidates:
+                        # The indices of activated modes associated with the potential ancestor s.
+                        # The indices are numbered according to the array of modes
+                        modes_s = onp.where(correspondence_mtx[:, s] == 1)[0]
+                        activated_modes_s = set(modes_s).intersection(set(activated_modes_indices))
+                        modes_ac = onp.concatenate((modes_ac, np.array(list(activated_modes_s))))
+                    modes_ac = onp.array(list(set(modes_ac)))
+                    # We filter out the modes that related to other nodes except nodes in ancestor_candidates
+                    valid_modes_ac = []
+                    for k in range(len(modes_ac)):
+                        mode_ac = modes_ac[k]
+                        node_ac = modes[mode_ac].nodes + 1
+                        validation_list = np.setdiff1d(node_ac, ancestor_candidates)
+                        if len(validation_list) == 0:
+                            valid_modes_ac.append(k)
+                    modes_ac = modes_ac[onp.array(valid_modes_ac)]
+                    # Now, modes_ac contains modes related only to nodes in ancestor_candidates
 
-                # Record the matrix Kbi(varphi, varphi) for each activated mode Kbi in pre_modes_ac
-                Kbis_varphi_varphi_candidates = Kbs_varphi_varphi[pre_modes_ac, :, :]
+                    # Record the matrix Kbi(varphi, varphi) for each activated mode Kbi
+                    # in modes of ancestor candidates
+                    Kbis_varphi_varphi_candidates = Kbs_varphi_varphi[modes_ac, :, :]
 
-                # Solve the constraint variational problem with only ancestor candidates
-                status, _activations, pre_yb = self.energy_estimate(gamma, varphi_ga, Kbis_varphi_varphi_candidates)
+                    # Solve the constraint variational problem with only ancestor candidates
+                    _status, _activations, yb = self.energy_estimate(gamma, varphi_ga, Kbis_varphi_varphi_candidates)
 
-                # if status == True, Node i can be expressed as a function of nodes in pre_nodes_ac
-                if status:
-                    nodes_ac = pre_nodes_ac
-                    modes_ac = pre_modes_ac
-                    yb = pre_yb
-                    activations = _activations
+                    # if _status == True, Node i can be expressed as a function of nodes in ancestor_candidates
+                    if _status:
 
-            # Now, nodes_ac contains all the ancestor candidates after pruning out redundant variables.
-            # modes_ac contains all the modes related only to nodes in nodes_ac
-            # activations contains activations of modes_ac
+                        Kbis_varphi_varphi_ancestors = Kbis_varphi_varphi_candidates
+                        modes_a = modes_ac # the modes of ancestors
 
-            # Next, we start to prune out redundant modes associated with nodes in nodes_ac
-            if len(nodes_ac) > 0:
-                Kbis_varphi_varphi_ancestors = Kbs_varphi_varphi[modes_ac, :, :]
-                modes_a = modes_ac # the modes of ancestors
+                        # Once we have the ancestors, we can prune out the modes associated with the ancestors
+                        # We prune out the mode of the lowest activation each time
+                        while _status and (len(_activations) > 1):
+                            sorted_activation_indices = np.argsort(_activations).tolist()
+                            pre_Kbis_varphi_varphi = Kbis_varphi_varphi_ancestors[sorted_activation_indices[1:], :, :]
+                            pre_indices = modes_a[sorted_activation_indices[1:]]
 
-                status = True
-                # Once we have the ancestors, we can prune out the modes associated with the ancestors
-                # We prune out the mode of the lowest activation each time
-                while status and (len(activations) > 1):
-                    sorted_activation_indices = np.argsort(activations).tolist()
-                    pre_Kbis_varphi_varphi = Kbis_varphi_varphi_ancestors[sorted_activation_indices[1:], :, :]
-                    pre_indices = modes_a[sorted_activation_indices[1:]]
+                            _status, _activations, _pre_yb = self.energy_estimate(gamma, varphi_ga, pre_Kbis_varphi_varphi)
 
-                    status, activations, pre_yb = self.energy_estimate(gamma, varphi_ga, pre_Kbis_varphi_varphi)
+                            if _status:
+                                Kbis_varphi_varphi_ancestors = pre_Kbis_varphi_varphi
+                                modes_a = pre_indices
+                                yb = _pre_yb
 
-                    if status:
-                        Kbis_varphi_varphi_ancestors = pre_Kbis_varphi_varphi
-                        modes_a = pre_indices
-                        yb = pre_yb
+                        disactivated_modes_indices = np.setdiff1d(modes_b_indices, modes_a).tolist()
+                        activation_codes[disactivated_modes_indices] = -1  # Put all the disactivated modes to Class c.
 
-                disactivated_modes_indices = np.setdiff1d(modes_b_indices, modes_a).tolist()
-                activation_codes[disactivated_modes_indices] = -1  # Put all the disactivated modes to Class c.
-
-                """ Add all the edges associated with the ith node  """
-                modes_b_indices = onp.where(activation_codes == 1)[0]
-                modes_b = modes[modes_b_indices]
-                for mode in modes_b:
-                    nodes = mode.nodes + 1
-                    for node in nodes:
-                        if node != i and (not G.has_edge(names[node-1], names[i-1])) and (node != 0):
-                            G.add_edge(names[node-1], names[i-1])
+                        """ Add all the edges associated with the ith node  """
+                        modes_b_indices = onp.where(activation_codes == 1)[0]
+                        modes_b = modes[modes_b_indices]
+                        for mode in modes_b:
+                            nodes = mode.nodes + 1
+                            for node in nodes:
+                                if node != i and (not G.has_edge(names[node-1], names[i-1])) and (node != 0):
+                                    G.add_edge(names[node-1], names[i-1])
 
 
-                """ Print out the equations """
-                """
-                The equation found is g = g_a + g_b, where g_a = x_i
-                g_b = K_b(., varphi)y_b. We need to compute K_b(., varphi). 
-                When, K_b(x, y) = psi(x)^T\psi(y). We have (K_b(.,varphi))_j = psi(x)^T(Psi(X)alpha_j),
-                where alpha_j is the jth normalized eigenvector of Kxx, Psi(X)=[psi(X_1);...;psi(X_N)]. Hence, 
-                K_b(., varphi) = psi(x)^T Psi(X) alphas. The jth column of Psi(X) contains the value of
-                the feature map evaluated at X_j.
-                """
+                        """ Print out the equations """
+                        """
+                        The equation found is g = g_a + g_b, where g_a = x_i
+                        g_b = K_b(., varphi)y_b. We need to compute K_b(., varphi). 
+                        When, K_b(x, y) = psi(x)^T\psi(y). We have (K_b(.,varphi))_j = psi(x)^T(Psi(X)alpha_j),
+                        where alpha_j is the jth normalized eigenvector of Kxx, Psi(X)=[psi(X_1);...;psi(X_N)]. Hence, 
+                        K_b(., varphi) = psi(x)^T Psi(X) alphas. The jth column of Psi(X) contains the value of
+                        the feature map evaluated at X_j.
+                        """
 
-                # Get the weights of the feature maps.
-                # For instance, if psi(x) = beta * phi(x), we return beta
-                coeffs = onp.array([mode.coeff() for mode in modes_b])
+                        # Get the weights of the feature maps.
+                        # For instance, if psi(x) = beta * phi(x), we return beta
+                        coeffs = onp.array([mode.coeff() for mode in modes_b])
 
-                M1 = onp.zeros((len(modes_b), N))
-                for t in range(len(modes_b)):
-                    mode = modes_b[t]
-                    M1[t, :] = vmap(mode.psi)(X.T)
+                        M1 = onp.zeros((len(modes_b), N))
+                        for t in range(len(modes_b)):
+                            mode = modes_b[t]
+                            M1[t, :] = vmap(mode.psi)(X.T)
 
-                M2 = alphas.T
-                M = np.dot(M1, M2)
+                        M2 = alphas.T
+                        M = np.dot(M1, M2)
 
-                weights_i = np.dot(M, yb)
-                weights_i = weights_i * coeffs
-                # print the equation representing x_i as the function of other variables
-                if verbose: print("Node {} as a function of other nodes".format(names[i-1]))
-                eq = "{}".format(names[i-1])
-                count = 0
-                for mode in modes_b:
-                    eq = eq + ' + '
-                    eq = eq + "({} {})".format(weights_i[count], mode.to_string())
-                    count = count + 1
-                eq = eq + ' = 0'
-                if verbose: print(eq)
-                if verbose: print("")
+                        weights_i = np.dot(M, yb)
+                        weights_i = weights_i * coeffs
+                        # print the equation representing x_i as the function of other variables
+                        if verbose: print("Node {} as a function of other nodes".format(names[i-1]))
+                        eq = "{}".format(names[i-1])
+                        count = 0
+                        for mode in modes_b:
+                            eq = eq + ' + '
+                            eq = eq + "({} {})".format(weights_i[count], mode.to_string())
+                            count = count + 1
+                        eq = eq + ' = 0'
+                        if verbose: print(eq)
+                        if verbose: print("")
+
+                        # Since _status == True, Node i can be expressed as a function of nodes in ancestor_candidates.
+                        # Thus, we break and jump out of the loop
+                        break
 
         return G
 
