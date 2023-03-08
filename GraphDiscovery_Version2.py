@@ -9,14 +9,8 @@ import networkx as nx
 from kernels import *
 from scipy.linalg import svd
 from Modes import *
-from itertools import chain, combinations
 from jax.config import config
 config.update("jax_enable_x64", True)
-
-def powerset(iterable):
-    "powerset([1,2,3]) --> (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
-    s = list(iterable)
-    return chain.from_iterable(combinations(s, r) for r in np.arange(1, len(s) + 1))
 
 class GraphDiscovery(object):
     """
@@ -33,7 +27,7 @@ class GraphDiscovery(object):
         vv = np.reshape(v, (-1, 1))
         mtx = np.dot(vv, vv.T)
         quadratic_term = np.sum(np.tril(mtx))
-        return 1 + beta1 * np.dot(x, y) + beta2 * quadratic_term + beta3 * gaussian_term - beta3
+        return 1 + beta1 * np.dot(x, y) + beta2 * quadratic_term + beta3 * gaussian_term
 
     def Kn(self, kernel, funcs):
         return self.Kmn(kernel, funcs, funcs)
@@ -93,6 +87,7 @@ class GraphDiscovery(object):
             for Kbi_varphi_varphi in Kbs_varphi_varphi:
                 Ebi = np.dot(yb, np.dot(Kbi_varphi_varphi, yb))
                 activations = np.append(activations, Ebi / Eb)
+                #activations = np.append(activations, Ebi)
 
         return status, activations, yb
 
@@ -146,19 +141,6 @@ class GraphDiscovery(object):
         # Add quadratic modes
         quadratic_modes = [QuadraticMode(onp.array([i, j]), onp.array([names[i], names[j]]), beta2) for i in range(d) for j in range(i+1)]
         modes = onp.append(modes, quadratic_modes)
-
-        # Add kernel modes
-        kernel_modes = [KernelMode(onp.array(list(s)), names[onp.array(list(s))], beta3, ks[onp.array(list(s))]) for s in powerset(range(d))]
-        modes = onp.append(modes, kernel_modes)
-
-        # The codes below are equivalent to the above two lines. Just for debuging purpose
-        # for s in powerset(range(d)):
-        #     _nodes =
-        #     _names = names[_nodes]
-        #     _ks = ks[_nodes]
-        #     mode = KernelMode(_nodes, _names, beta3, _ks)
-        #     modes = onp.append(modes, onp.array([mode]))
-
         # The number of modes
         modes_num = len(modes)
 
@@ -334,88 +316,43 @@ class GraphDiscovery(object):
                             G.add_edge(names[node-1], names[i-1])
 
 
-                if verbose: self.print_equations(i, X, N, names, modes_b, alphas, yb)
+                """ Print out the equations """
+                """
+                The equation found is g = g_a + g_b, where g_a = x_i
+                g_b = K_b(., varphi)y_b. We need to compute K_b(., varphi). 
+                When, K_b(x, y) = psi(x)^T\psi(y). We have (K_b(.,varphi))_j = psi(x)^T(Psi(X)alpha_j),
+                where alpha_j is the jth normalized eigenvector of Kxx, Psi(X)=[psi(X_1);...;psi(X_N)]. Hence, 
+                K_b(., varphi) = psi(x)^T Psi(X) alphas. The jth column of Psi(X) contains the value of
+                the feature map evaluated at X_j.
+                """
+
+                # Get the weights of the feature maps.
+                # For instance, if psi(x) = beta * phi(x), we return beta
+                coeffs = onp.array([mode.coeff() for mode in modes_b])
+
+                M1 = onp.zeros((len(modes_b), N))
+                for t in range(len(modes_b)):
+                    mode = modes_b[t]
+                    M1[t, :] = vmap(mode.psi)(X.T)
+
+                M2 = alphas.T
+                M = np.dot(M1, M2)
+
+                weights_i = np.dot(M, yb)
+                weights_i = weights_i * coeffs
+                # print the equation representing x_i as the function of other variables
+                if verbose: print("Node {} as a function of other nodes".format(names[i-1]))
+                eq = "{}".format(names[i-1])
+                count = 0
+                for mode in modes_b:
+                    eq = eq + ' + '
+                    eq = eq + "({} {})".format(weights_i[count], mode.to_string())
+                    count = count + 1
+                eq = eq + ' = 0'
+                if verbose: print(eq)
+                if verbose: print("")
 
         return G
-
-    def print_equations(self, i, X, N, names, modes, alphas, yb):
-        """ Print out the equations """
-
-        # We first classify the modes into two categories:
-        # modes with features (k(x, y) = psi(x)psi(y)) and modes with kernels (kernels cannot be splitted)
-
-        modes_features = onp.array([])
-        modes_kernels = onp.array([])
-        for mode in modes:
-            if "Kernel" == mode.type:
-                modes_kernels = onp.append(modes_kernels, mode)
-            else:
-                modes_features = onp.append(modes_features, mode)
-
-        """
-        The equation found is g = g_a + g_b, where g_a = x_i
-        g_b = K_b(., varphi)y_b.
-        
-        For simplicity we write g_b = K(., varphi)y
-        We have 
-            K(., varphi)y = \sum_i^r y_i \sum_s^N K(., x_s) alpha_{s, i}
-                          = \sum_s^N K(., x_s) \sum_i^r y_i alpha_{s, i}
-        So, we first compute \sum_i^r y_i alpha_{s, i} for each s, which is fixed
-        """
-        w = np.dot(alphas.T, yb)
-
-        """
-        Now , we can write K(., varphi)y = \sum_s^N K(., x_s) w_s
-
-        We first print out equations  related to feature modes
-        
-        For K(x, y) = <psi(x), psi(y)>, we have
-            K(., varphi)y = <psi(x), \sum_s^N psi(x_s)w_s>.
-        
-        Thus, we compute \sum_s^N psi(x_s)w_s
-        """
-        # print the equation representing x_i as the function of other variables
-        print("Node {} as a function of other nodes".format(names[i - 1]))
-        eq = "{}".format(names[i - 1])
-
-        if len(modes_features) > 0:
-            # Psi = [psi(x_1);...;psi(x_N)]
-            Psi = onp.zeros((len(modes_features), N))
-            for t in range(len(modes_features)):
-                mode = modes_features[t]
-                Psi[t, :] = vmap(mode.feature)(X.T)
-
-            # Get the weights of the feature maps.
-            # For instance, if psi(x) = beta * phi(x), we return beta
-            coeffs = onp.array([mode.coeff() for mode in modes])
-
-            weights_i = np.dot(Psi, w)
-            weights_i = weights_i * coeffs
-
-            count = 0
-            for mode in modes_features:
-                eq = eq + ' + '
-                eq = eq + "({} {})".format(weights_i[count], mode.to_string())
-                count = count + 1
-        if len(modes_kernels) > 0:
-            """
-            Next, we compute the equations related to non-separable kernels
-            
-            Note that K(., varphi)y = \sum_s^N K(., x_s) w_s
-            """
-            for mode in modes_kernels:
-                eq = eq + ' + '
-                part = "{} \\ sum_{{s=1}}^{} ".format(mode.coeff() ** 2, N)
-                part = part + mode.to_string("x[s]") + "w[s]"
-                eq = eq + "(" +  part + ")"
-
-        eq = eq + ' = 0'
-        print(eq)
-        if len(modes_kernels) > 0:
-            print("w = ")
-            print(w)
-        print("")
-
 
     def plot_graph(self, G):
             nx.draw(G, with_labels=True, pos=nx.kamada_kawai_layout(G, G.nodes()), node_size=600, font_size=8, alpha=0.6)
