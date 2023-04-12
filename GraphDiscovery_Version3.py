@@ -1,4 +1,4 @@
-#File with the main functions of graph discovery
+# File with the main functions of graph discovery
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy as onp
@@ -11,22 +11,23 @@ from scipy.linalg import svd
 from Modes import *
 from itertools import chain, combinations
 from jax.config import config
+
 config.update("jax_enable_x64", True)
 
-"""
-the signal-noise ratio test by hypothesis test
-Not finished yet!                                                                                                        
-"""
+
+# if the signal-noise ratio is greater than 1, there is a signal, otherwise it is a noise.
 
 def powerset(iterable):
     "powerset([1,2,3]) --> (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
     s = list(iterable)
     return chain.from_iterable(combinations(s, r) for r in np.arange(1, len(s) + 1))
 
+
 class GraphDiscovery(object):
     """
-    In this class, we only consider linear, quadratic, and product kernels
+    In this class, we consider linear, quadratic, and product kernels
     """
+
     def __init__(self):
         pass
 
@@ -92,7 +93,7 @@ class GraphDiscovery(object):
 
         status = False
         activations = np.array([])
-        if activation_noise < 1/2:
+        if activation_noise < 1 / 2:
             status = True
             # The constraint represented by g contains a signal
             for Kbi_varphi_varphi in Kbs_varphi_varphi:
@@ -101,8 +102,8 @@ class GraphDiscovery(object):
 
         return status, activations, yb
 
-
-    def discovery_in_graph(self, X, ks, gamma, G, names, examing_nodes, beta1=1e-1, beta2=1e-2, beta3=1e-3, epsilon=1e-3, verbose=False):
+    def discovery_in_graph(self, X, ks, gamma, G, names, examing_nodes, beta1=1e-1, beta2=1e-2, beta3=1e-3,
+                           epsilon=1e-3, verbose=False):
         """
         Discover relations in a graph for given nodes, built on top of a networkx directed graph (DiGraph) G
 
@@ -141,7 +142,7 @@ class GraphDiscovery(object):
 
         # We always add an extra constant node as a hidden node in the graph to the zero slot
         # The constant node will not appear in the graph but is used in the calculation
-        # Thus, the ith node in graph.nodes is the (i+1)th node in the underneath computations
+        # Thus, the ith node in the graph.nodes is the (i+1)th node in the underneath computations
 
         # Create modes
         modes = onp.array([ConstantMode(onp.array([-1]))])
@@ -149,10 +150,13 @@ class GraphDiscovery(object):
         linear_modes = [LinearMode(onp.array([i]), onp.array([names[i]]), beta1) for i in range(d)]
         modes = onp.append(modes, linear_modes)
         # Add quadratic modes
-        quadratic_modes = [QuadraticMode(onp.array([i, j]), onp.array([names[i], names[j]]), beta2) for i in range(d) for j in range(i+1)]
+        quadratic_modes = [QuadraticMode(onp.array([i, j]), onp.array([names[i], names[j]]), beta2) for i in range(d)
+                           for j in range(i + 1)]
         modes = onp.append(modes, quadratic_modes)
+
         # Add kernel modes
-        kernel_modes = [KernelMode(onp.array(list(s)), names[onp.array(list(s))], beta3, ks[onp.array(list(s))]) for s in powerset(range(d))]
+        kernel_modes = [KernelMode(onp.array(list(s)), names[onp.array(list(s))], beta3, ks[onp.array(list(s))]) for s
+                        in powerset(range(d))]
         modes = onp.append(modes, kernel_modes)
 
         # The codes below are equivalent to the above two lines. Just for debuging purpose
@@ -170,7 +174,7 @@ class GraphDiscovery(object):
         # Entries at (i, j) equal to 1 implies that there is a relation between the ith mode and the jth node.
         # Otherwise, entries at (i, j) equal to 0 implies there is no relation between the ith mode and the jth node.
         # The matrix size is (modes_num, d + 1), which means we have the constant node.
-        correspondence_mtx = onp.zeros((modes_num, d+1))
+        correspondence_mtx = onp.zeros((modes_num, d + 1))
         for i in range(len(modes)):
             nodes = modes[i].nodes + 1
             correspondence_mtx[i, nodes] = 1
@@ -215,28 +219,29 @@ class GraphDiscovery(object):
             Kbs_varphi_varphi[t, :, :] = func(alphas, alphas)
 
         # Next, we determine ancestors of Nodes.
-        examing_nodes_indices = examing_nodes + 1 # We add it by 1 since we added a hidden constant node
+        examing_nodes_indices = examing_nodes + 1  # We add it by 1 since we added a hidden constant node
 
         for i in examing_nodes_indices:
-            if verbose: print('Examining Node {0}'.format(names[i-1]))
-            modes_i = onp.where(correspondence_mtx[:, i] == 1)[0] # The indices of modes related to the ith node
+            if verbose: print('Examining Node {0}'.format(names[i - 1]))
+            modes_i = onp.where(correspondence_mtx[:, i] == 1)[0]  # The indices of modes related to the ith node
 
             # The operations below put the mode beta1 * xi * xi' into Class a, all other modes related to the ith
             # node to Class c, and the rest modes to Class b
-            activation_codes = onp.ones(modes_num) # Record the activation of each mode, 0 for Class a, 1 for Class b, -1 for Class c
+            activation_codes = onp.ones(
+                modes_num)  # Record the activation of each mode, 0 for Class a, 1 for Class b, -1 for Class c
             activation_codes[modes_i] = -1  # Put all the modes related to the ith node to Class c
-            activation_codes[i] = 0   # Set the ith mode (beta1 * xi * xi') to be in Class a.
+            activation_codes[i] = 0  # Set the ith mode (beta1 * xi * xi') to be in Class a.
             ##################################################################################
             # Deal with the constraint that g_a = x_i
 
             # build the vector [varphi, ga]
-            ga = X[i-1] #Get the data of the ith node. i-1 is the index of the data of the ith node in the graph
+            ga = X[i - 1]  # Get the data of the ith node. i-1 is the index of the data of the ith node in the graph
             ga = np.reshape(ga, (1, -1))
             varphi_ga = np.dot(ga, alphas.T).flatten()
 
-            modes_b_indices = onp.where(activation_codes == 1)[0] # Choose those modes in Class b
-            Kbis_varphi_varphi = Kbs_varphi_varphi[modes_b_indices, :, :] # Record the matrix Kbi(varphi, varphi) for each activated mode Kbi in Class b
-
+            modes_b_indices = onp.where(activation_codes == 1)[0]  # Choose those modes in Class b
+            Kbis_varphi_varphi = Kbs_varphi_varphi[modes_b_indices, :,
+                                 :]  # Record the matrix Kbi(varphi, varphi) for each activated mode Kbi in Class b
 
             # Solve the constraint variational problem
             # status == False implies that the signal is mostly noisy, then activations = None and yb = None
@@ -244,7 +249,7 @@ class GraphDiscovery(object):
             # activation (the ratio of the energy of each mode and the total energy) of each mode
             status, activations, yb = self.energy_estimate(gamma, varphi_ga, Kbis_varphi_varphi)
             # If status == True, node i has ancestors. We need to determine the ancestors of node i.
-            nodes_ac = np.setdiff1d(np.array(range(d+1)), np.array([i])) # the ancestor candidates (acronym ac)
+            nodes_ac = np.setdiff1d(np.array(range(d + 1)), np.array([i]))  # the ancestor candidates (acronym ac)
             modes_ac = modes_b_indices.copy()
             if not status: nodes_ac = np.array([])
             _activations = activations.copy()
@@ -308,7 +313,7 @@ class GraphDiscovery(object):
             # Next, we start to prune out redundant modes associated with nodes in nodes_ac
             if len(nodes_ac) > 0:
                 Kbis_varphi_varphi_ancestors = Kbs_varphi_varphi[modes_ac, :, :]
-                modes_a = modes_ac # the modes of ancestors
+                modes_a = modes_ac  # the modes of ancestors
 
                 status = True
                 # Once we have the ancestors, we can prune out the modes associated with the ancestors
@@ -334,9 +339,8 @@ class GraphDiscovery(object):
                 for mode in modes_b:
                     nodes = mode.nodes + 1
                     for node in nodes:
-                        if node != i and (not G.has_edge(names[node-1], names[i-1])) and (node != 0):
-                            G.add_edge(names[node-1], names[i-1])
-
+                        if node != i and (not G.has_edge(names[node - 1], names[i - 1])) and (node != 0):
+                            G.add_edge(names[node - 1], names[i - 1])
 
                 if verbose: self.print_equations(i, X, N, names, modes_b, alphas, yb)
 
@@ -359,7 +363,7 @@ class GraphDiscovery(object):
         """
         The equation found is g = g_a + g_b, where g_a = x_i
         g_b = K_b(., varphi)y_b.
-        
+
         For simplicity we write g_b = K(., varphi)y
         We have 
             K(., varphi)y = \sum_i^r y_i \sum_s^N K(., x_s) alpha_{s, i}
@@ -372,10 +376,10 @@ class GraphDiscovery(object):
         Now , we can write K(., varphi)y = \sum_s^N K(., x_s) w_s
 
         We first print out equations  related to feature modes
-        
+
         For K(x, y) = <psi(x), psi(y)>, we have
             K(., varphi)y = <psi(x), \sum_s^N psi(x_s)w_s>.
-        
+
         Thus, we compute \sum_s^N psi(x_s)w_s
         """
         # print the equation representing x_i as the function of other variables
@@ -404,14 +408,14 @@ class GraphDiscovery(object):
         if len(modes_kernels) > 0:
             """
             Next, we compute the equations related to non-separable kernels
-            
+
             Note that K(., varphi)y = \sum_s^N K(., x_s) w_s
             """
             for mode in modes_kernels:
                 eq = eq + ' + '
                 part = "{} \\ sum_{{s=1}}^{} ".format(mode.coeff() ** 2, N)
                 part = part + mode.to_string("x[s]") + "w[s]"
-                eq = eq + "(" +  part + ")"
+                eq = eq + "(" + part + ")"
 
         eq = eq + ' = 0'
         print(eq)
@@ -420,7 +424,6 @@ class GraphDiscovery(object):
             print(w)
         print("")
 
-
     def plot_graph(self, G):
-            nx.draw(G, with_labels=True, pos=nx.kamada_kawai_layout(G, G.nodes()), node_size=600, font_size=8, alpha=0.6)
+        nx.draw(G, with_labels=True, pos=nx.kamada_kawai_layout(G, G.nodes()), node_size=600, font_size=8, alpha=0.6)
 
