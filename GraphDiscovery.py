@@ -12,8 +12,21 @@ from jax.config import config
 config.update("jax_enable_x64", True)
 
 class GraphDiscovery(object):
-    def __init__(self):
-        pass
+    def __init__(self,X,names,beta,G=None):
+        self.d, self.N = tuple(X.shape)
+        self.X=X
+        self.names=names
+        
+        self.modes=self.setup_modes(beta)
+        #self.correspondence_mtx=self.setup_correspondance_matrix()
+        self.alphas=self.perform_PCA(epsilon=1e-3)
+        #self.Kbs_varphi_varphi=self.setup_Kbs_varphi_varphi()
+        if G is None:
+            self.G=nx.DiGraph()
+            for name in names:
+                self.G.add_node(name)
+        else:
+            self.G=G
 
     def kernel(self, x, y, beta1, beta2, beta3, ks):
         gaussian_terms = [1 + k(x, y) for k in ks]
@@ -25,10 +38,10 @@ class GraphDiscovery(object):
         quadratic_term = np.sum(np.tril(mtx))
         return 1 + beta1 * np.dot(x, y) + beta2 * quadratic_term + beta3 * gaussian_term
 
-    def Kn(self, kernel, funcs):
-        return self.Kmn(kernel, funcs, funcs)
+    def Kn(kernel, funcs):
+        return GraphDiscovery.Kmn(kernel, funcs, funcs)
 
-    def Kmn(self, kernel, funcs_l, funcs_r):
+    def Kmn(kernel, funcs_l, funcs_r):
         N_l, m_l = funcs_l.shape
         N_r, m_r = funcs_r.shape
 
@@ -40,125 +53,36 @@ class GraphDiscovery(object):
         val = vmap(lambda x, y: kernel(x, y))(BBv, BBh)
         K = np.reshape(val, (N_l, N_r))
         return K
-
-    def energy_estimate(self, gamma, ga_varphi, Kbs_varphi_varphi):
-        """
-        Solve the variational problem with constraints and compute the energy ratio of each mode.
-
-        Inputs:
-
-        gamma:              positive real
-                        the noise scale
-        ga_varphi:          list
-                        g_a represents the constraint function. ga_varphi represents the vector [varphi, g_a]
-        Kbs_varphi_varphi:  (m x r x r)-tensor
-                        a list of matrix, where each matrix is K_{b, i}(varphi, varphi), where K_{b, i} is the ith mode
-
-        Outputs:
-
-        status:             Bool
-                        False implies that the data is mostly noise given the constraint. True means there is a signal
-        activations:        list or None
-                        If status == False, activations = None;
-                        Otherwise, activations contains the energy ratio of each mode
-        yb:                 list or None
-                        If status == False, yb = None;
-                        Otherwise, yb = -(Kb(varphi, varphi) + gamma I)^{-1} ga_varphi
-        """
-        Kb_varphi_varphi = reduce(np.add, Kbs_varphi_varphi)
-        noise_Kb_varphi_varphi = Kb_varphi_varphi + gamma * np.eye(len(Kb_varphi_varphi))
-        Ltmp = np.linalg.cholesky(noise_Kb_varphi_varphi)
-        tmp = jsp.linalg.solve_triangular(Ltmp, ga_varphi, lower=True)
-        yb = -jsp.linalg.solve_triangular(Ltmp.T, tmp, lower=False)
-
-        Eb = -np.dot(ga_varphi, yb)
-
-        activation_noise = gamma * np.dot(yb, yb) / Eb
-
-        status = False
-        activations = np.array([])
-        if activation_noise < 1/2:
-            status = True
-            # The constraint represented by g contains a signal
-            for Kbi_varphi_varphi in Kbs_varphi_varphi:
-                Ebi = np.dot(yb, np.dot(Kbi_varphi_varphi, yb))
-                activations = np.append(activations, Ebi / Eb)
-
-        return status, activations, yb
+    
 
 
-    def discovery_in_graph(self, X, ks, gamma, G, names, examing_nodes, beta1=1e-1, beta2=1e-2, beta3=1e-3, epsilon=1e-3, verbose=False):
-        """
-        Discover relations in a graph for given nodes, built on top of a networkx directed graph (DiGraph) G
+    def setup_modes(self,beta,l=1):
+        constant_mode=ConstantMode()
 
-        Inputs:
+        l_modes=[LinearMode(onp.array([i]), onp.array([self.names[i]]), 1) for i in range(self.d)]
+        linear_modes=SingleModeContainer.compute_linear_mode_container(l_modes,self.X,constant_mode=constant_mode,beta1=beta[0])
 
-        X:          d x N matrix
-            Dataset, samples of (X1_i; ...; Xd_i), i=1:N. If d variables = nodes in the graph and N timesteps
-        ks:         list
-            Array of kernels, one for each node;
-        gamma:      positive real
-            The regularization constant for the constraints
-        G:          graph
-            The pre-built graph, which already contains some relations
-        names:      list
-            List of names of nodes in G
-        examing_nodes   list
-            List of nodes in G to be examined
-        beta1:      positive real
-            The penalization on the linear kernel
-        beta2:      positive real
-            The penalization on the quadratic kernel
-        beta3:      positive real
-            The penalization on the fully nonlinear kernel
-        epsilon:    positive real
-            The threshold to determine the number of eigenvalues selected
-        verbose (Default = False): Bool
-            Whether to print intermediate results
+        q_modes = [QuadraticMode(onp.array([i, j]), onp.array([self.names[i], self.names[j]]), 1) for i in range(self.d) for j in range(i+1)]
+        quadratic_modes=PairwiseModeContainer.compute_quadratic_mode_container(q_modes,self.X,constant_mode=constant_mode)
 
-        Outputs:
+        nl_modes = [NonLinearMode(onp.array([i]), onp.array([self.names[i]]), 1,lambda x,y:np.exp(-((x-y)/l)**2)) for i in range(self.d)]
+        non_linear_modes=CombinatorialModeContainer.compute_gaussian_mode_container(nl_modes,l,self.X,constant_mode=constant_mode)
 
-        G: Networkx directed graph
-        (Not yet implemented to return the weights of each arrow)
-        """
-        d, N = X.shape
-        self.d, self.N = d, N
 
-        # We first build a directed graph
-        # preG is the complete directed graph, which encodes potential relations between nodes
-        # G is an empty directed graph, represents the final output graph
-        #preG = nx.complete_graph(d).to_directed()
-        # G = nx.create_empty_copy(preGraph)
+        modes=ModeContainer([linear_modes,quadratic_modes,non_linear_modes],beta,level=beta.shape[0])
 
-        # Create modes
-        modes = onp.array([ConstantMode()])
-        # Add linear modes
-        linear_modes = [LinearMode(onp.array([i]), onp.array([names[i]]), beta1) for i in range(d)]
-        modes = onp.append(modes, linear_modes)
-        # Add quadratic modes
-        quadratic_modes = [QuadraticMode(onp.array([i, j]), onp.array([names[i], names[j]]), beta2) for i in range(d) for j in range(i+1)]
-        modes = onp.append(modes, quadratic_modes)
-        # The number of modes
-        modes_num = len(modes)
+        return modes
+    
+    #def setup_correspondance_matrix(self):
+    #    correspondence_mtx = onp.zeros((len(self.modes), self.d))
+    #    for i in range(len(self.modes)):
+    #        nodes = self.modes[i].nodes
+    #        correspondence_mtx[i, nodes] = 1
+    #    return correspondence_mtx
+    
 
-        # The correspondence between modes and nodes.
-        # Entries at (i, j) equal to 1 implies that there is a relation between the ith mode and the jth node.
-        # Otherwise, entries at (i, j) equal to 0 implies there is no relation between the ith mode and the jth node.
-        # The matrix siz is (modes_num, d), which means we ignore the constant node.
-        correspondence_mtx = onp.zeros((modes_num, d))
-        for i in range(len(modes)):
-            nodes = modes[i].nodes
-            correspondence_mtx[i, nodes] = 1
-
-        ''' For debug purpose, print out the correspondence matrix '''
-        # if verbose:
-        #     print("The correspondence matrix is ")
-        #     print(correspondence_mtx)
-        #     print("")
-
-        Kxx = onp.zeros((N, N))
-        for mode in modes:
-            Kxx = Kxx + self.Kn(lambda x, y: mode.kappa(x, y), X.T)
+    def perform_PCA(self,epsilon):
+        Kxx = self.modes.K_mat
 
         ''' For debug purpose, check whether Kxx is formulated correctly '''
         # Kxx = self.Kn(lambda x, y: self.kernel(x, y, beta1, beta2, beta3, ks), X.T)
@@ -166,120 +90,152 @@ class GraphDiscovery(object):
 
         # Compute sorted eigenvalues and eigenfunctions of Kxx
         eigenValues, eigenVectors = np.linalg.eigh(Kxx)
+        
         idx = np.argsort(-eigenValues.real)
+        
         lambdas = eigenValues[idx].real
         alphas = eigenVectors[:, idx].real
 
         # Find r such that r = min{n| lambda_{n} / lambda_{1} \leq \epsilon}
-        radios = lambdas / lambdas[0]
-        r = np.argwhere(radios <= epsilon).flatten()[0]
+        ratios = lambdas / lambdas[0]
+        r = np.argwhere(ratios <= epsilon).flatten()[0]
 
         lambdas = lambdas[:r]
         # Normalize the eigenvectors (alphas) of Kxx such that \|alphas[i]\|^2=1
         alphas = vmap(lambda v, lbda: v / np.linalg.norm(v))(alphas.T[:r], lambdas)
         # Now, alphas is a r x N matrix, where each row is a normalized eigenvector
+        self.modes.change_of_basis(alphas)
+        return alphas
+    
+    
+    def solve_variationnal(gamma,ga_varphi,Kb_varphi_varphi):
+        noise_Kb_varphi_varphi = Kb_varphi_varphi + gamma * np.eye(Kb_varphi_varphi.shape[0])
+        Ltmp = np.linalg.cholesky(noise_Kb_varphi_varphi)
+        tmp = jsp.linalg.solve_triangular(Ltmp, ga_varphi, lower=True)
+        yb = -jsp.linalg.solve_triangular(Ltmp.T, tmp, lower=False)
 
-        # Next, we determine ancestors of Nodes.
-        Kbs_varphi_varphi = onp.zeros((len(modes), r, r))  # Record the matrix Kb(varphi, varphi) for each mode
+        return yb
 
-        for t in range(len(modes)):
-            mode = modes[t]
-            Kbt = self.Kn(lambda x, y: mode.kappa(x, y), X.T)
-            func = (lambda ar, ac: np.dot(ar, np.dot(Kbt, ac)))
-            func = (vmap(func, in_axes=(None, 0)))
-            func = jit(vmap(func, in_axes=(0, None)))
-            Kbs_varphi_varphi[t, :, :] = func(alphas, alphas)
+    def activation_noise(gamma, ga_varphi, Kb_varphi_varphi):
+        print('matrix',Kb_varphi_varphi)
+        yb=GraphDiscovery.solve_variationnal(gamma,ga_varphi,Kb_varphi_varphi)
+        print('yb',yb)
+        
+        Eb = -np.dot(ga_varphi, yb)
+        print('Eb',Eb)
+        return gamma * np.dot(yb, yb) / Eb
 
-        for i in examing_nodes:
-            if verbose: print('Examining Node {0}'.format(names[i]))
-            modes_i = onp.where(correspondence_mtx[:, i] == 1)[0] # The indices of modes related to the ith node
+    def activations(gamma, ga_varphi, modes,yb):
+        Eb = -np.dot(ga_varphi, yb)
+        activation_noise = gamma * np.dot(yb, yb) / Eb
+        matrices=onp.array(list(map(lambda i:modes.get_K_except_index(i),range(modes.modes_number))))
+        activations=1-activation_noise-np.dot(np.matmul(matrices,yb),yb)/Eb
+        
 
-            # The operations below put the mode beta1 * xi * xi' into Class a, all other modes related to the ith
-            # node to Class c, and the rest modes to Class b
-            activation_codes = onp.ones(modes_num) # Record the activation of each mode, 0 for Class a, 1 for Class b, -1 for Class c
-            activation_codes[modes_i] = -1  # Put all the modes related to the ith node to Class c
-            activation_codes[i+1] = 0 # Set the (i+1)th mode (beta1 * xi * xi') to be in Class a
-            ##################################################################################
-            # Deal with the constraint that g_a = x_i
+        return activation_noise,activations
+    
+    def prune_ancestors(modes,gamma, varphi_ga):
+        yb=GraphDiscovery.solve_variationnal(gamma,varphi_ga,modes.K_mat)
 
-            # build the vector [varphi, ga]
-            ga = X[i]
-            ga = np.reshape(ga, (1, -1))
-            varphi_ga = np.dot(ga, alphas.T).flatten()
-
-            modes_b_indices = onp.where(activation_codes == 1)[0] # Choose those modes in Class b
-            Kbis_varphi_varphi = Kbs_varphi_varphi[modes_b_indices, :, :] # Record the matrix Kbi(varphi, varphi) for each activated mode Kbi in Class b
-
-
-            # Solve the constraint variational problem
-            # status == False implies that the signal is mostly noisy, then activations = None and yb = None
-            # status == True means that there is a signal given the constraint. Then, activations contains the
-            # activation (the ratio of the energy of each mode and the total energy) of each mode
-            status, activations, yb = self.energy_estimate(gamma, varphi_ga, Kbis_varphi_varphi)
-            activated_modes_indices = modes_b_indices # Record the indices of activated modes of Class b. The indices index the array of modes
-            if not status: activated_modes_indices = np.array([])
-            # if status == True, we start to iterate and prune out one mode each time until (before) the noise dominates
-            while status and (len(activations) > 1):
-                sorted_activation_indices = np.argsort(activations).tolist()
-                pre_Kbis_varphi_varphi = Kbis_varphi_varphi[sorted_activation_indices[1:]]
-                pre_indices = activated_modes_indices[sorted_activation_indices[1:]]
-
-                status, activations, pre_yb = self.energy_estimate(gamma, varphi_ga, pre_Kbis_varphi_varphi)
-
-                if status:
-                    Kbis_varphi_varphi = pre_Kbis_varphi_varphi
-                    activated_modes_indices = pre_indices
-                    yb = pre_yb
-
-            disactivated_modes_indices = np.setdiff1d(modes_b_indices, activated_modes_indices).tolist()
-            activation_codes[disactivated_modes_indices] = -1 #Put all the disactivated modes to Class c.
+        activation_noise,activations=GraphDiscovery.activations(gamma, varphi_ga, modes,yb)
 
 
-            """ Add all the edges associated with the ith node  """
-            modes_b_indices = onp.where(activation_codes == 1)[0]
-            modes_b = modes[modes_b_indices]
-            for mode in modes_b:
-                nodes = mode.nodes
-                for node in nodes:
-                    if node != i and (not G.has_edge(names[node], names[i])):
-                        G.add_edge(names[node], names[i])
-
-            """ Print out the equations """
-            """
-            The equation found is g = g_a + g_b, where g_a = x_i
-            g_b = K_b(., varphi)y_b. We need to compute K_b(., varphi). 
-            When, K_b(x, y) = psi(x)^T\psi(y). We have (K_b(.,varphi))_j = psi(x)^T(Psi(X)alpha_j),
-            where alpha_j is the jth normalized eigenvector of Kxx, Psi(X)=[psi(X_1);...;psi(X_N)]. Hence, 
-            K_b(., varphi) = psi(x)^T Psi(X) alphas. The jth column of Psi(X) contains the value of
-            the feature map evaluated at X_j.
-            """
-
-            # Get the weights of the feature maps.
-            # For instance, if psi(x) = beta * phi(x), we return beta
-            coeffs = onp.array([mode.coeff() for mode in modes_b])
-
-            M1 = onp.zeros((len(modes_b), N))
-            for t in range(len(modes_b)):
-                mode = modes_b[t]
-                M1[t, :] = vmap(mode.psi)(X.T)
-
-            M2 = alphas.T
-            M = np.dot(M1, M2)
-
-            weights_i = np.dot(M, yb)
-            weights_i = weights_i * coeffs
-            # print the equation representing x_i as the function of other variables
-            if verbose: print(f"Node {names[i]} as a function of other nodes")
-            eq = f"{names[i]} = "
-            for count,mode in enumerate(modes_b):
-                eq = eq + f"{-round(weights_i[count], 2)} * {mode.to_string()} + "
-            eq=eq[:-2]
+        if activation_noise>0.5:
+            return np.array([]),None
+        while activation_noise<0.5 and (modes.modes_number > 1):
+            print('activations',activations)
+            print('noise',activation_noise)
             
-            if verbose: print(eq)
-            if verbose: print("")
+            sorted_activation_indices = onp.argsort(activations)
+            candidate_modes=modes.remove_least_activated(sorted_activation_indices)
 
-        return G
+            pre_yb=GraphDiscovery.solve_variationnal(gamma, varphi_ga, candidate_modes.K_mat)
+            activation_noise,activations = GraphDiscovery.activations(gamma, varphi_ga, candidate_modes,yb)
+            if activation_noise<0.5:
+                modes=candidate_modes
+                yb = pre_yb
+        return modes,yb
+    
+    def find_level(modes,gamma,varphi_ga):
+        for level in range(1,modes.beta.shape[0]+1):
+            modes.level=level
+            activation_noise=GraphDiscovery.activation_noise(gamma,varphi_ga,modes.K_mat)
+            print(f'level: {level}',f'activation noise:{activation_noise:.2f}')
+            if activation_noise<0.5:
+                modes.remove_above_level()
+                return True
+        return False
+        
 
-    def plot_graph(self, G):
-            nx.draw(G, with_labels=True, pos=nx.kamada_kawai_layout(G, G.nodes()), node_size=600, font_size=8, alpha=0.6)
+    
+
+    def prune_ancestors_recursive(modes,gamma,varphi_ga,yb=None):
+        new_yb=GraphDiscovery.solve_variationnal(gamma,varphi_ga,modes.K_mat)
+
+        activation_noise,activations=GraphDiscovery.activations(gamma, varphi_ga, modes,yb)
+
+        if activation_noise>0.5:
+            if yb is None:
+                return ModeContainer([],None,0),None
+            else:
+                return modes,yb
+        else:
+            sorted_activation_indices = onp.argsort(activations)
+            candidate_modes=modes.remove_least_activated(sorted_activation_indices)
+            return GraphDiscovery.prune_ancestors_recursive(candidate_modes,gamma,varphi_ga,new_yb)
+    
+
+    
+    def add_edges_to_graph(self,modes,index):
+        for mode in modes.mode_containers[0].modes:
+            nodes = mode.nodes
+            for node in nodes:
+                self.G.add_edge(self.names[node], self.names[index])
+    
+    def compute_coefficients_of_equation(self,i,yb,active_modes):
+        modes_b_indices = onp.where(activation_codes == 1)[0]
+        modes_b = self.modes[modes_b_indices]
+        coeffs = onp.array([1]+[np.sqrt(active_modes.beta)])
+
+        M1 = onp.zeros((len(modes_b), self.N))
+        for t in range(len(modes_b)):
+            mode = modes_b[t]
+            M1[t, :] = vmap(mode.psi)(self.X.T)
+
+        M = np.dot(M1, self.alphas.T)
+
+        weights_i = np.dot(M, yb)
+        weights_i = weights_i * coeffs
+        # print the equation representing x_i as the function of other variables
+        eq = f"{self.names[i]} = "
+        for count,mode in enumerate(modes_b):
+            eq = eq + f"{-round(weights_i[count], 2)} * {mode.to_string()} + "
+        eq=eq[:-2]
+        return eq
+
+    
+    def examine_node(self,i,gamma,verbose=False):
+        if verbose: print('Examining Node {0}'.format(self.names[i]))
+
+        # build the vector [varphi, ga]
+        ga = self.X[i]
+        varphi_ga = np.matmul(self.alphas,ga)
+        print('varphi_ga',varphi_ga)
+        #print([[str(mode) for mode in mode_container.modes]for mode_container in self.modes.mode_containers])
+        active_modes=self.modes.remove_index(i)
+        print(active_modes)
+        if not GraphDiscovery.find_level(active_modes,gamma,varphi_ga):
+            return 'no level found'
+        active_modes,yb=GraphDiscovery.prune_ancestors(active_modes,gamma, varphi_ga)
+        print(active_modes)
+
+        self.add_edges_to_graph(active_modes,i)
+        self.plot_graph()
+        #return self.compute_coefficients_of_equation(i,yb,active_modes)
+
+
+
+
+    def plot_graph(self):
+            nx.draw(self.G, with_labels=True, pos=nx.kamada_kawai_layout(self.G, self.G.nodes()), node_size=600, font_size=8, alpha=0.6)
 
