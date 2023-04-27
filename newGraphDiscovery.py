@@ -3,6 +3,7 @@ import networkx as nx
 from tqdm import tqdm
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
+from functools import partial
 
 class GraphDiscoveryNew():
 
@@ -23,15 +24,34 @@ class GraphDiscoveryNew():
         self.name_to_index={name:index for index,name in enumerate(names)}
 
         self.modes=ModeContainer(constant_mat,linear_mat,quadratic_mat,gaussian_mat,onp.eye(X.shape[1]),names,beta,level)
-        mat=self.modes.get_K()
-        self.print_func(f'Performing eigenvalue decomposition on matrix of shape {mat.shape}')
-        self.eigenvalues,self.alphas=onp.linalg.eigh(mat)
+        
 
         self.G=nx.DiGraph()
         self.G.add_nodes_from(names)
+    
+
+    @property
+    def alphas(self):
+        try:
+            return self._alphas
+        except:
+            mat=self.modes.get_K()
+            self.print_func(f'Performing eigenvalue decomposition on matrix of shape {mat.shape}')
+            self._eigenvalues,self._alphas=onp.linalg.eigh(mat)
+            return self._alphas
+    
+    @property
+    def eigenvalues(self):
+        try:
+            return self._eigenvalues
+        except:
+            mat=self.modes.get_K()
+            self.print_func(f'Performing eigenvalue decomposition on matrix of shape {mat.shape}')
+            self._eigenvalues,self._alphas=onp.linalg.eigh(mat)
+            return self._eigenvalues
 
     
-    def solve_variationnal(ga,K,gamma,regularize_noise=False,K_inv=None):
+    def solve_variationnal(ga,K=None,gamma=None,regularize_noise=False,K_inv=None):
         if regularize_noise:
             min_eigenval=onp.linalg.eigvalsh(K)[0]
             noise_level=gamma+abs(min_eigenval)-min_eigenval
@@ -50,87 +70,87 @@ class GraphDiscoveryNew():
         esp_A=-beta*onp.trace(K_inv)+onp.trace(K2)
         K3=K_inv@K2
         K4=K_inv@K3
-        print("beta",beta)
-        print('K1',onp.trace(K_inv))
-        print('K2',onp.trace(K2))
-        print('K3',onp.trace(K3))
-        print('K4',onp.trace(K4))
         Var_A=beta**2*onp.trace(K2)-2*beta*onp.trace(K3)+onp.trace(K4)
-        #Z=onp.random.normal(size=(20000,K_inv.shape[0]))
-        #A=-onp.einsum('ij,ij->i',Z,Z@K2)+alpha*onp.einsum('ij,ij->i',Z,Z@K_inv)
-        #print(A.shape)
-        #print('mean',onp.mean(A),esp_A)
-        #print('var',onp.var(A),2*Var_A)
-        print("esp",esp_A)
-        print("std",onp.sqrt(2*Var_A))
         return -esp_A/onp.sqrt(2*Var_A)
     
     def alphas_from_kPCA_method(alphas,eigenvalues,kPCA='noise regularization',gamma=None,tolerance=None,number_of_eigenvectors=None):
         if kPCA=='noise regularization':
-            assert gamma is not None
+            assert gamma is not None and gamma!='auto'
             if number_of_eigenvectors is not None:
-                alphas=alphas[-number_of_eigenvectors:][eigenvalues>gamma]
+                alphas_to_return=alphas[-number_of_eigenvectors:][eigenvalues>gamma]
             else:
-                alphas=alphas[eigenvalues>gamma]
+                alphas_to_return=alphas[eigenvalues>gamma]
         elif kPCA=='eigenvalue ratio':
             assert tolerance is not None
-            alphas=alphas[eigenvalues/eigenvalues[-1]>tolerance]
+            alphas_to_return=alphas[eigenvalues/eigenvalues[-1]>tolerance]
         elif kPCA=='fixed number':
-            alphas=alphas[-number_of_eigenvectors:]
+            alphas_to_return=alphas[-number_of_eigenvectors:]
         else:
             raise Exception('kPCA must be in {"noise regularization","eigenvalue ratio","fixed number"}')
-        return alphas
+        return alphas_to_return
     
-    def get_alphas(self,**kwargs):
-        return GraphDiscoveryNew.alphas_from_kPCA_method(self.alphas,self.eigenvalues,**kwargs)
+
+    def get_alphas(self,kPCA='noise regularization',gamma=None,tolerance=None,number_of_eigenvectors=None):
+        if kPCA=='no':
+            return onp.eye(self.modes.get_K().shape[0])
+        return GraphDiscoveryNew.alphas_from_kPCA_method(self.alphas,self.eigenvalues,kPCA,gamma,tolerance,number_of_eigenvectors)
         
     
-    def find_ancestors(self,name,gamma_0='auto',kPCA='noise regularization',tolerance=None,number_of_eigenvectors=None,gamma_min=1e-9):
+    def find_ancestors(self,name,gamma='auto',kPCA='no',acceptation_logic='default',PCAtolerance=None,number_of_eigenvectors=None,gamma_min=1e-9):
         
         index=self.name_to_index[name]
-        alphas=self.get_alphas(kPCA=kPCA,gamma=gamma_0,tolerance=tolerance,number_of_eigenvectors=number_of_eigenvectors)
+        alphas=self.get_alphas(kPCA=kPCA,gamma=gamma,tolerance=PCAtolerance,number_of_eigenvectors=number_of_eigenvectors)
         ga=alphas@self.X[index]
         active_modes=self.modes.delete_node(index)
         active_modes=active_modes.change_of_basis(alphas)
-        self.print_func(f'PCA reduced dimension to {active_modes.constant_mat.shape[0]}')
-        #if gamma_0=='auto':
-        #        gamma=GraphDiscoveryNew.find_gamma(active_modes.get_K())
-        #        gamma=max(gamma,gamma_min)
-        #        print(f'found gamma={gamma:.2e}')
-        #else:
-        #    gamma=gamma_0
+        if kPCA!='no':
+            self.print_func(f'PCA reduced dimension to {active_modes.constant_mat.shape[0]}')
+        
+        if acceptation_logic=='default':
+            acceptation_logic=GraphDiscoveryNew.acceptation_logic(cutoff=0.4,use_Z=True)
+        else:
+            assert callable(acceptation_logic)
 
         for which in ['linear','quadratic','gaussian']:
-            K_inv=active_modes.get_K(which)
-            if gamma_0=='auto':
-                gamma=GraphDiscoveryNew.find_gamma(active_modes.get_K(which))
-                gamma=max(gamma,gamma_min)
-                print(f'found gamma={gamma:.2e}')
+            K=active_modes.get_K(which)
+            if gamma=='auto':
+                gamma_used=GraphDiscoveryNew.find_gamma(K)
+                gamma_used=max(gamma_used,gamma_min)
             else:
-                gamma=gamma_0
+                gamma_used=gamma
                 
-            K_inv+=gamma*onp.eye(K_inv.shape[0])
-            K_inv=onp.linalg.inv(K_inv)
-            yb,noise=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(which),gamma,K_inv=K_inv)
-            Z=GraphDiscoveryNew.Z_test(noise,gamma*K_inv) ##beta=noise
-            #Z=GraphDiscoveryNew.Z_test(noise,K_inv)
-            print(which,"noise",noise,"Z",Z)
-            if abs(Z)>1.96:
-                continue
-            print("break instead")
+            K+=gamma_used*onp.eye(K.shape[0])
+            K_inv=onp.linalg.inv(K)
+            yb,noise=GraphDiscoveryNew.solve_variationnal(ga,gamma=gamma_used,K_inv=K_inv)
+            Z=GraphDiscoveryNew.Z_test(noise,gamma_used*K_inv)
+
+            accept=acceptation_logic(noise,Z,which)
+            self.print_func(f'{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z:.2f}\n decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
+            if accept:
+                break
         
-        if abs(Z)<1.96:
-            self.print_func(f'{name} has no ancestors (Z test={Z:.2f})\n')
+        if not accept:
+            self.print_func(f'{name} has no ancestors (n/(s+n)={noise:.2f})\n')
             return
-        self.print_func(f'{name} has ancestors with {which} kernel (Z test={Z:.2f})')
+        self.print_func(f'{name} has ancestors with {which} kernel (n/(s+n)={noise:.2f})')
         active_modes.set_level(which)
-        _,ancestor_modes=GraphDiscoveryNew.recursive_ancestor_finder(ga,active_modes,yb,gamma)
-        self.print_func(ancestor_modes,'\n')
+        _,ancestor_modes=GraphDiscoveryNew.recursive_ancestor_finder(ga,active_modes,yb,gamma_used,acceptation_logic=partial(acceptation_logic,which=which))
+        self.print_func('ancestors after pruning: ',ancestor_modes,'\n')
         for ancestor_name in ancestor_modes.names:
             self.G.add_edge(ancestor_name,name,type=which)
+    
+    def acceptation_logic(cutoff,use_Z):
+        def func(noise,Z,which):
+            if noise<cutoff:
+                return True
+            if use_Z and which=='gaussian':
+                return abs(Z)>1.96
+            return False
+        return func
+
 
     
-    def recursive_ancestor_finder(ga,active_modes,yb,gamma):
+    def recursive_ancestor_finder(ga,active_modes,yb,gamma,acceptation_logic):
         energy=-onp.dot(ga,yb)
         activations=[onp.dot(yb,active_modes.get_K_of_index(i)@yb)/energy for i in range(active_modes.node_number)]
         new_modes=active_modes.delete_node(onp.argmin(activations))
@@ -143,199 +163,36 @@ class GraphDiscoveryNew():
             gamma=gamma,
             K_inv=K_inv)
         new_Z=GraphDiscoveryNew.Z_test(new_noise,gamma*K_inv) ##beta=noise
+        accept=acceptation_logic(noise=new_noise,Z=new_Z)
         
-        if abs(new_Z)>1.96:
+        if accept:
             if new_modes.node_number==1:
                 return new_yb,new_modes
             else:
-                return GraphDiscoveryNew.recursive_ancestor_finder(ga,new_modes,new_yb,gamma)
+                return GraphDiscoveryNew.recursive_ancestor_finder(ga,new_modes,new_yb,gamma,acceptation_logic)
         else:
             return yb,active_modes
         
 
-    def find_gamma(K,option='variance',tol=1e-10):
+    def find_gamma(K,option='optimal_ratio',tol=1e-10):
         assert option in {'variance','optimal_ratio'}
         eigenvalues=onp.linalg.eigvalsh(K)
-        print(f"max {eigenvalues.max():.2e}, min {eigenvalues.min():.2e}")
-        plt.figure()
-        plt.hist(eigenvalues[:-1],bins=100)
-        plt.show()
         eigenvalues=eigenvalues[eigenvalues>tol]
         if option=='variance':
-            
             var=lambda gamma_log:-onp.var(1/(1+eigenvalues*onp.exp(-gamma_log)))
             res = minimize(var, onp.array([0]), method='nelder-mead',
-                           options={'xatol': 1e-8, 'disp': True})
-            
-            
+                           options={'xatol': 1e-8, 'disp': False})
         if option=='optimal_ratio':
             def to_optimize(gamma_log):
                 vals=1/(1+eigenvalues*onp.exp(-gamma_log))
                 return abs(0.5-(onp.mean(vals**2)+vals[-1]**2)/(onp.mean(vals)-vals[-1]))
-
             res = minimize(to_optimize, onp.array([0]), method='nelder-mead',
-                           options={'xatol': 1e-8, 'disp': True})
-        gammas=onp.logspace(-6,2,20)
-        
-        #plt.figure()
-        #plt.plot(gammas,[to_optimize(gamma) for gamma in gammas])
-        #plt.xscale("log")
-        #plt.yscale("log")
-        #plt.show()
-        
-        plt.figure()
-        plt.plot(range(len(eigenvalues)),eigenvalues)
-        plt.yscale('log')
-        plt.show()
-        plt.figure()
-        plt.hist(1/(1+eigenvalues*onp.exp(-res.x[0])),bins=100)
-        plt.show()
+                           options={'xatol': 1e-8, 'disp': False})
         return onp.exp(res.x[0])
-        
 
-    
-    def find_threshold_gamma(self,name,type_of_kernel='gaussian',tol_binary_search=1e-2,kPCA='fixed number',tolerance=None,number_of_eigenvectors=None):
-        index=self.name_to_index[name]
-        alphas=self.get_alphas(kPCA=kPCA,gamma=None,tolerance=tolerance,number_of_eigenvectors=number_of_eigenvectors)
-        ga=alphas@self.X[index]
-        active_modes=self.modes.delete_node(index)
-        active_modes=active_modes.change_of_basis(alphas)
-        return GraphDiscoveryNew.binary_search(ga,active_modes,type_of_kernel,tol_binary_search)
+ 
 
-
-    def binary_search(ga,active_modes,type_of_kernel,tol):
-        left=-15
-        right=0
-        _,noise_left=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),10**left)
-        while not 0<=noise_left<=1:
-            left+=0.5
-            _,noise_left=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),10**left)
-        _,noise_right=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),10**right)
-        while not 0.5<=noise_right<=1:
-            right+=1
-            _,noise_right=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),10**right)
-        noise_middle=1
-        while abs(noise_middle-0.5)>tol:
-            middle=(left+right)/2
-            _,noise_middle=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),10**middle)
-            #print(f'Gamma :1e{middle:.4f}, Computed noise : {noise_middle}')
-            if noise_middle<0.5:
-                left=middle
-            else:
-                right=middle
-        return 10**middle
-    
-    def activations_gamma(self,name,gamma_range,type_of_kernel='gaussian'):
-        index=self.name_to_index[name]
-        ga=self.alphas@self.X[index]
-        active_modes=self.modes.delete_node(index)
-        activations=[]
-        for gamma in tqdm(gamma_range):
-            yb,_=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),gamma)
-
-            energy=-onp.dot(ga,yb)
-            noise=-gamma*onp.dot(yb,yb)/onp.dot(ga,yb)
-            activations.append([noise]+[onp.dot(yb,active_modes.get_K_of_index(i)@yb)/energy for i in range(active_modes.node_number)])
-        return activations
-
-    def noise_gamma(self,name,gamma,type_of_kernel='gaussian'):
-        index=self.name_to_index[name]
-        ga=self.alphas@self.X[index]
-        active_modes=self.modes.delete_node(index)
-        
-        yb,_=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(type_of_kernel),gamma)
-
-        energy=-onp.dot(ga,yb)
-        noise=-gamma*onp.dot(yb,yb)/onp.dot(ga,yb)
-        return noise
-
-    
-    def find_gamma_behavior(self,name,gamma_list,kPCA='noise regularization',tolerance=None,number_of_eigenvectors=None):
-        result={'which':[],'activations':[],'noise':[],'ancestors':[]}
-        index=self.name_to_index[name]
-
-        alphas=self.get_alphas(kPCA=kPCA,gamma=gamma,tolerance=tolerance,number_of_eigenvectors=number_of_eigenvectors)
-        ga=alphas@self.X[index]
-        active_modes=self.modes.delete_node(index)
-        active_modes=active_modes.change_of_basis(alphas)
-
-        for gamma in gamma_list:
-            
-            for which in ['linear','quadratic','gaussian']:
-                yb,noise=GraphDiscoveryNew.solve_variationnal(ga,active_modes.get_K(which),gamma)
-                if 0<noise<=0.5:
-                    result['which'].append(which)
-                    break
-            
-            if not 0<noise<=0.5:
-                result['noise'].append(noise)
-                result['which'].append('noise')
-                result['activations'].append([None]*(len(self.names)-1))
-                result['ancestors'].append([])
-            else:
-                active_modes.set_level(which)
-                yb,ancestor_modes=GraphDiscoveryNew.recursive_ancestor_finder(ga,active_modes,yb,gamma)
-                energy=-onp.dot(ga,yb)
-                acti={n:None for n in active_modes.names}
-                for i,n in enumerate(ancestor_modes.names):
-                    acti[n]=onp.dot(yb,ancestor_modes.get_K_of_index(i)@yb)/energy
-                result['activations'].append(list(acti.values()))
-                new_noise=-gamma*onp.dot(yb,yb)/onp.dot(ga,yb)
-                assert new_noise<0.5
-                result['noise'].append(new_noise)
-                result['ancestors'].append(ancestor_modes.names)
-        return result
-    
-    def noise_ratio_test(self,name,gamma,type_of_kernel='gaussian',N_samples=1000):
-        index=self.name_to_index[name]
-        Y=self.X[index]
-        active_modes=self.modes.delete_node(index)
-
-        K1=active_modes.get_K(type_of_kernel)
-        K=K1+gamma*onp.eye(K1.shape[0])
-
-        Y_sol=onp.linalg.solve(K,Y)
-
-        s_n=onp.dot(Y_sol,(K1-gamma*onp.eye(K1.shape[0]))@Y_sol)
-
-        Z=onp.random.standard_normal((K1.shape[0],N_samples))
-        K_inv=onp.linalg.inv(K)
-        mat_H1=onp.eye(K1.shape[0])-2*gamma*K_inv
-        mat_H0=gamma*K_inv@mat_H1
-        sn_H0=onp.einsum('ij,ij->j',Z,mat_H0@Z)
-        sn_H1=onp.einsum('ij,ij->j',Z,mat_H1@Z)
-        return sn_H0,sn_H1,s_n
-    
-    def find_gamma_H0(self,name,type_of_kernel='gaussian'):
-        index=self.name_to_index[name]
-        Y=self.X[index]
-        active_modes=self.modes.delete_node(index)
-
-        K1=active_modes.get_K(type_of_kernel)
-        tr=onp.trace(K1)
-        print(tr)
-        mean_val=lambda gamma:tr/gamma-K1.shape[0]
-        eigenvalues,eigenvectors=onp.linalg.eigh(K1)
-        s_n=lambda gamma:onp.dot(eigenvectors.T@Y,onp.diag((eigenvalues-gamma)/((eigenvalues+gamma)**2))@eigenvectors.T@Y)
-        gammas=onp.logspace(3,10,100)
-        return gammas,[s_n(gamma)-mean_val(gamma) for gamma in tqdm(gammas)]
-
-    
-    def find_gamma_H1(self,name,type_of_kernel='gaussian'):
-        index=self.name_to_index[name]
-        Y=self.X[index]
-        active_modes=self.modes.delete_node(index)
-
-        K1=active_modes.get_K(type_of_kernel)
-        eigenvalues,eigenvectors=onp.linalg.eigh(K1)
-        mean_val=lambda gamma:K1.shape[0]-2*onp.sum(gamma/(gamma+eigenvalues))
-        s_n=lambda gamma:onp.dot(eigenvectors.T@Y,onp.diag((eigenvalues-gamma)/((eigenvalues+gamma)**2))@eigenvectors.T@Y)
-        gammas=onp.logspace(-6,2,100)
-        return gammas,[s_n(gamma)-mean_val(gamma) for gamma in tqdm(gammas)]
-
-        
-
-        
+  
     def plot_graph(self):
             nx.draw(self.G, with_labels=True, pos=nx.kamada_kawai_layout(self.G, self.G.nodes()), node_size=600, font_size=8, alpha=0.6)
 
