@@ -108,6 +108,8 @@ class GraphDiscoveryNew():
         
         if acceptation_logic=='default':
             acceptation_logic=GraphDiscoveryNew.acceptation_logic(cutoff=0.4,use_Z=True)
+        elif acceptation_logic=='manual':
+            acceptation_logic=GraphDiscoveryNew.manual_acceptation()
         else:
             assert callable(acceptation_logic)
 
@@ -123,9 +125,9 @@ class GraphDiscoveryNew():
             K_inv=onp.linalg.inv(K)
             yb,noise=GraphDiscoveryNew.solve_variationnal(ga,gamma=gamma_used,K_inv=K_inv)
             Z=GraphDiscoveryNew.Z_test(noise,gamma_used*K_inv)
-
+            self.print_func(f'{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z:.2f}')
             accept=acceptation_logic(noise,Z,which)
-            self.print_func(f'{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z:.2f}\n decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
+            self.print_func(f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
             if accept:
                 break
         
@@ -148,6 +150,21 @@ class GraphDiscoveryNew():
             return False
         return func
 
+    def manual_acceptation():
+        def func(noise,Z,which):
+            decision=None
+            print(f'{which} kernel\n n/(n+s)={noise:.2f}, Z={Z:.2f}')
+            while decision is None:
+                val = input("Decision ? Y:signal , N:Noise, STOP:exit algorithm")
+                if val=='Y':
+                    return True
+                elif val=='N':
+                    return False
+                elif val=='STOP':
+                    raise Exception("Algorithm stopped")
+                else:
+                    continue
+        return func
 
     
     def recursive_ancestor_finder(ga,active_modes,yb,gamma,acceptation_logic):
