@@ -191,7 +191,7 @@ class GraphDiscoveryNew():
             return yb,active_modes
         
 
-    def find_gamma(K,option='optimal_ratio',tol=1e-10):
+    def find_gamma(K,option='variance',tol=1e-10):
         assert option in {'variance','optimal_ratio'}
         eigenvalues=onp.linalg.eigvalsh(K)
         eigenvalues=eigenvalues[eigenvalues>tol]
@@ -210,8 +210,11 @@ class GraphDiscoveryNew():
  
 
   
-    def plot_graph(self):
-            nx.draw(self.G, with_labels=True, pos=nx.kamada_kawai_layout(self.G, self.G.nodes()), node_size=600, font_size=8, alpha=0.6)
+    def plot_graph(self,type_label=True):
+            pos=nx.kamada_kawai_layout(self.G, self.G.nodes())
+            nx.draw(self.G, with_labels=True, pos=pos, node_size=600, font_size=8, alpha=0.6)
+            if type_label:
+                nx.draw_networkx_edge_labels(self.G,pos,edge_labels=nx.get_edge_attributes(self.G,'type'))
 
 
 
