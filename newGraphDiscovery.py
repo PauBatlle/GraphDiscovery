@@ -15,7 +15,7 @@ class GraphDiscoveryNew():
         constant_mat=onp.ones((X.shape[1],X.shape[1]))
         linear_mat=onp.expand_dims(X,-1)*onp.expand_dims(X,1)
         quadratic_mat=onp.expand_dims(linear_mat,0)*onp.expand_dims(linear_mat,1)
-        quadratic_mat=quadratic_mat*(1+onp.eye(quadratic_mat.shape[0]))/2
+        quadratic_mat=quadratic_mat/2*(1+onp.eye(quadratic_mat.shape[0]))[:,:,None,None]# take into account off diagonal elements are counted twice
         diff_X=onp.tile(onp.expand_dims(X,-1),(1,1,X.shape[1]))-onp.tile(onp.expand_dims(X,1),(1,X.shape[1],1))
         gaussian_mat=onp.exp(-(diff_X/l)**2/2)
 
