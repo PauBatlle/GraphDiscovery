@@ -137,7 +137,7 @@ class GraphDiscoveryNew():
             return
         self.print_func(f'{name} has ancestors with {which} kernel (n/(s+n)={noise:.2f})')
         active_modes.set_level(which)
-        _,ancestor_modes=GraphDiscoveryNew.recursive_ancestor_finder(ga,active_modes,yb,gamma_used,acceptation_logic=partial(acceptation_logic,which=which))
+        _,ancestor_modes=GraphDiscoveryNew.recursive_ancestor_finder(ga,active_modes,yb,gamma_used,acceptation_logic=partial(acceptation_logic,which=which),printer=self.print_func)
         self.print_func('ancestors after pruning: ',ancestor_modes,'\n')
         for ancestor_name in ancestor_modes.names:
             self.G.add_edge(ancestor_name,name,type=which)
@@ -147,7 +147,7 @@ class GraphDiscoveryNew():
             if noise<cutoff:
                 return True
             if use_Z and which=='gaussian':
-                return abs(Z)>1.96
+                return abs(Z)>1.96 and noise<0.9
             return False
         return func
 
@@ -168,7 +168,7 @@ class GraphDiscoveryNew():
         return func
 
     
-    def recursive_ancestor_finder(ga,active_modes,yb,gamma,acceptation_logic):
+    def recursive_ancestor_finder(ga,active_modes,yb,gamma,acceptation_logic,printer):
         energy=-onp.dot(ga,yb)
         activations=[onp.dot(yb,active_modes.get_K_of_index(i)@yb)/energy for i in range(active_modes.node_number)]
         new_modes=active_modes.delete_node(onp.argmin(activations))
@@ -182,12 +182,14 @@ class GraphDiscoveryNew():
             K_inv=K_inv)
         new_Z=GraphDiscoveryNew.Z_test(new_noise,gamma*K_inv) ##beta=noise
         accept=acceptation_logic(noise=new_noise,Z=new_Z)
+        printer(f'ancestors : {new_modes}\n n/(n+s)={new_noise:.2f}, Z={new_Z:.2f}')
+        printer(f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
         
         if accept:
             if new_modes.node_number==1:
                 return new_yb,new_modes
             else:
-                return GraphDiscoveryNew.recursive_ancestor_finder(ga,new_modes,new_yb,gamma,acceptation_logic)
+                return GraphDiscoveryNew.recursive_ancestor_finder(ga,new_modes,new_yb,gamma,acceptation_logic,printer)
         else:
             return yb,active_modes
         
