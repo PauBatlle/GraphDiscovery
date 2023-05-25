@@ -7,7 +7,7 @@ from functools import partial
 
 class GraphDiscoveryNew():
 
-    def __init__(self,X,beta,names,l=1,verbose=True) -> None:
+    def __init__(self,X,beta,names,possible_edges=None,l=1,verbose=True) -> None:
         self.X=X
         self.print_func = print if verbose else lambda *a, **k: None
 
@@ -26,6 +26,7 @@ class GraphDiscoveryNew():
 
         self.modes=ModeContainer(constant_mat,linear_mat,quadratic_mat,gaussian_mat,onp.eye(X.shape[1]),names,beta,level)
         
+        self.possible_edges=possible_edges
 
         self.G=nx.DiGraph()
         self.G.add_nodes_from(names)
@@ -102,13 +103,19 @@ class GraphDiscoveryNew():
         index=self.name_to_index[name]
         alphas=self.get_alphas(kPCA=kPCA,gamma=gamma,tolerance=PCAtolerance,number_of_eigenvectors=number_of_eigenvectors)
         ga=alphas@self.X[index]
-        active_modes=self.modes.delete_node(index)
+        active_modes=self.modes.delete_node_by_name(name)
+        if self.possible_edges is not None:
+            for possible_name in active_modes.names:
+                if possible_name not in self.possible_edges.predecessors(name):
+                    active_modes=active_modes.delete_node_by_name(possible_name)
+
+        
         active_modes=active_modes.change_of_basis(alphas)
         if kPCA!='no':
             self.print_func(f'PCA reduced dimension to {active_modes.constant_mat.shape[0]}')
         
         if acceptation_logic=='default':
-            acceptation_logic=GraphDiscoveryNew.acceptation_logic(cutoff=0.4,use_Z=True)
+            acceptation_logic=GraphDiscoveryNew.acceptation_logic(cutoff=0.5,use_Z=True)
         elif acceptation_logic=='manual':
             acceptation_logic=GraphDiscoveryNew.manual_acceptation()
         else:
@@ -244,6 +251,12 @@ class ModeContainer():
     @property
     def node_number(self):
         return self.names.shape[0]
+    
+    def delete_node_by_name(self,target_name):
+        for i,name in enumerate(self.names):
+            if name==target_name:
+                return self.delete_node(i)
+        raise f'{target_name} is not in the modes\' list of names'
     
     def delete_node(self,index):
         new_linear_mat = onp.delete(self.linear_mat,index,axis=0)
