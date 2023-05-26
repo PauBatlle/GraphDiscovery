@@ -5,3 +5,4 @@ google_hospital.csv
 google_index.csv
 google_vaccination.csv
 .DS_Store
+*.pyc
