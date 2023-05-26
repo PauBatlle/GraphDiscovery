@@ -201,9 +201,9 @@ class GraphDiscoveryNew():
             return yb,active_modes
         
 
-    def find_gamma(K,option='variance',tol=1e-10):
+    def find_gamma(K,option='optimal_ratio',tol=1e-15):
         assert option in {'variance','optimal_ratio'}
-        eigenvalues=onp.linalg.eigvalsh(K)
+        eigenvalues=onp.sort(onp.linalg.eigvalsh(K))
         eigenvalues=eigenvalues[eigenvalues>tol]
         if option=='variance':
             var=lambda gamma_log:-onp.var(1/(1+eigenvalues*onp.exp(-gamma_log)))
@@ -212,9 +212,14 @@ class GraphDiscoveryNew():
         if option=='optimal_ratio':
             def to_optimize(gamma_log):
                 vals=1/(1+eigenvalues*onp.exp(-gamma_log))
-                return abs(0.5-(onp.mean(vals**2)+vals[-1]**2)/(onp.mean(vals)-vals[-1]))
-            res = minimize(to_optimize, onp.array([0]), method='nelder-mead',
+                return abs(2*(onp.mean(vals**2)+vals[-1]**2)-(onp.mean(vals)+vals[-1]))
+            plt.figure()
+            plt.plot(onp.logspace(-15,2,100),[to_optimize(g) for g in onp.logspace(-10,2,100)])
+            plt.xscale('log')
+            plt.show()
+            res = minimize(to_optimize, onp.array([-15]), method='nelder-mead',
                            options={'xatol': 1e-8, 'disp': False})
+        print('optimisation result',res.fun)
         return onp.exp(res.x[0])
 
  
