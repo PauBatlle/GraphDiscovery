@@ -84,7 +84,16 @@ class GraphDiscoveryNew:
         return yb, noise
 
     def Z_test(beta, K_inv):
+        """computes Z-test using 1000 samples"""
         K2 = K_inv @ K_inv
+        B=lambda Z: onp.dot(Z,K2@Z)/onp.dot(Z,K_inv@Z)
+        samples=onp.random.normal(size=(1000,K_inv.shape[0]))
+        B_samples=onp.array([B(sample) for sample in samples])
+        print(beta,B_samples)
+        return (beta-B_samples.mean())/B_samples.std()
+
+
+        
         esp_A = -beta * onp.trace(K_inv) + onp.trace(K2)
         K3 = K_inv @ K2
         K4 = K_inv @ K3
