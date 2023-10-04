@@ -83,14 +83,15 @@ class GraphDiscoveryNew:
             noise = -noise_level * onp.dot(yb, yb) / onp.dot(ga, yb)
         return yb, noise
 
-    def Z_test(beta, K_inv):
+    def Z_test(beta, y_b,K_inv,gamma):
         """computes Z-test using 1000 samples"""
         K2 = K_inv @ K_inv
-        B=lambda Z: onp.dot(Z,K2@Z)/onp.dot(Z,K_inv@Z)
-        samples=onp.random.normal(size=(1000,K_inv.shape[0]))
+        B=lambda Z: onp.dot(Z,K2@Z)#/onp.dot(Z,K_inv@Z)
+        samples=gamma*onp.random.normal(size=(1000,K_inv.shape[0]))
         B_samples=onp.array([B(sample) for sample in samples])
-        print(beta,B_samples)
-        return (beta-B_samples.mean())/B_samples.std()
+        print(gamma**2*onp.dot(y_b,y_b),B_samples)
+        print(f'gamma={gamma}')
+        return (gamma**2*onp.dot(y_b,y_b)-B_samples.mean())/B_samples.std()
 
 
         
@@ -195,7 +196,7 @@ class GraphDiscoveryNew:
             yb, noise = GraphDiscoveryNew.solve_variationnal(
                 ga, gamma=gamma_used, K_inv=K_inv
             )
-            Z = GraphDiscoveryNew.Z_test(noise, gamma_used * K_inv)
+            Z = GraphDiscoveryNew.Z_test(noise,yb, gamma_used * K_inv,gamma_used)
             self.print_func(
                 f"{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z:.2f}"
             )
@@ -267,7 +268,7 @@ class GraphDiscoveryNew:
         new_yb, new_noise = GraphDiscoveryNew.solve_variationnal(
             ga, new_modes.get_K(), gamma=gamma, K_inv=K_inv
         )
-        new_Z = GraphDiscoveryNew.Z_test(new_noise, gamma * K_inv)  # beta=noise
+        new_Z = GraphDiscoveryNew.Z_test(new_noise, new_yb,gamma * K_inv,gamma)  # beta=noise
         accept = acceptation_logic(noise=new_noise, Z=new_Z)
         printer(f"ancestors : {new_modes}\n n/(n+s)={new_noise:.2f}, Z={new_Z:.2f}")
         printer(f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
