@@ -57,7 +57,7 @@ class GraphDiscoveryNew:
         N=1000
         samples=gamma*onp.random.normal(size=(N,cho_factor[0].shape[0]))
         B_samples=onp.array([GraphDiscoveryNew.solve_variationnal(sample,gamma, cho_factor)[1] for sample in samples])
-        return onp.sort(B_samples)[int(0.05*N)]
+        return onp.sort(B_samples)[int(0.05*N)],onp.sort(B_samples)[int(0.95*N)]
 
 
     def find_ancestors(
@@ -85,11 +85,15 @@ class GraphDiscoveryNew:
         else:
             assert callable(acceptation_logic)
 
-        for i, which in enumerate(["linear", "quadratic", "gaussian"]):
+        for which in ["linear", "quadratic", "gaussian"]:
             K = active_modes.get_K(which)
             if gamma == "auto":
                 gamma_used = GraphDiscoveryNew.find_gamma(K=K, which=which, Y=ga,tol=1e-10)
-                gamma_used = max(gamma_used, gamma_min)
+                if gamma_used < gamma_min:
+                    self.print_func(
+                        f"""gamma too small for set tolerance({gamma_used:.2e}), using {gamma_min:.2e} instead\nThis can either mean that the noise is very low or there is an issue in the automatic determination of gamma. To change the tolerance, change parameter gamma_min"""
+                    )
+                    gamma_used = gamma_min
             else:
                 gamma_used = gamma
 
@@ -98,11 +102,11 @@ class GraphDiscoveryNew:
             yb, noise = GraphDiscoveryNew.solve_variationnal(
                 ga, gamma=gamma_used, cho_factor=(c, low)
             )
-            Z = GraphDiscoveryNew.Z_test(gamma_used,cho_factor=(c, low))
+            Z_low,Z_high = GraphDiscoveryNew.Z_test(gamma_used,cho_factor=(c, low))
             self.print_func(
-                f"{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z:.2f}"
+                f"{which} kernel (using gamma={gamma_used:.2e})\n n/(n+s)={noise:.2f}, Z={Z_low:.2f}"
             )
-            accept = acceptation_logic(noise, Z, which)
+            accept = acceptation_logic(noise, Z_low, which)
             self.print_func(
                 f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}'
             )
@@ -117,14 +121,49 @@ class GraphDiscoveryNew:
             f"{name} has ancestors with {which} kernel (n/(s+n)={noise:.2f})"
         )
         active_modes.set_level(which)
-        _, ancestor_modes = GraphDiscoveryNew.recursive_ancestor_finder(
+        '''_, ancestor_modes = GraphDiscoveryNew.recursive_ancestor_finder(
             ga,
             active_modes,
             yb,
             gamma_used,
             acceptation_logic=partial(acceptation_logic, which=which),
             printer=self.print_func,
+        )'''
+        ancestor_modes, noises, Zs=GraphDiscoveryNew.iterative_ancestor_finder(
+            ga,
+            active_modes,
+            gamma_used,
+            yb,
+            acceptation_logic=partial(acceptation_logic, which=which),
+            printer=self.print_func,
         )
+        #plot evolution of noise and Z, and in second plot on the side evolution of Z_{k+1}-Z_k
+        #it should be two subplots side by side
+        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))
+        axes[0].plot(list(range(1,1+len(noises)))[::-1],noises,label='noise')
+        axes[0].plot(list(range(1,1+len(noises)))[::-1],[z[0] for z in Zs],label='5% quantile of random noise')
+        axes[0].plot(list(range(1,1+len(noises)))[::-1],[z[1] for z in Zs],label='95% quantile of random noise')
+        #color in between the two lines above
+        axes[0].fill_between(list(range(1,1+len(noises)))[::-1],[z[0] for z in Zs],[z[1] for z in Zs],alpha=0.2)
+
+        axes[0].axvline(x=ancestor_modes.node_number,linestyle='--',color='k',label=f'chosen number of ancestors={ancestor_modes.node_number}')
+        axes[0].set_xlabel('number of ancestors')
+        axes[0].set_ylabel('noise')
+        axes[0].invert_xaxis()
+        axes[0].set_xticks(onp.linspace(len(noises),1,6,dtype=onp.int32,endpoint=True))
+        axes[0].legend()
+        axes[1].plot(list(range(1,len(noises)))[::-1],[noises[i+1]-noises[i] for i in range(len(noises)-1)],label='noise increment')
+        axes[1].axvline(x=ancestor_modes.node_number,linestyle='--',color='k',label=f'chosen number of ancestors={ancestor_modes.node_number}')
+        axes[1].legend()
+        axes[1].set_xlabel('number of ancestors')
+        axes[1].set_ylabel('noise increment')
+        axes[1].invert_xaxis()
+        axes[1].set_xticks(onp.linspace(len(noises)-1,1,6,dtype=onp.int32,endpoint=True))
+        fig.tight_layout()
+        plt.show()
+
+
+
         self.print_func("ancestors after pruning: ", ancestor_modes, "\n")
         for ancestor_name in ancestor_modes.names:
             self.G.add_edge(ancestor_name, name, type=which)
@@ -173,9 +212,9 @@ class GraphDiscoveryNew:
         new_yb, new_noise = GraphDiscoveryNew.solve_variationnal(
             ga, gamma=gamma, cho_factor=(c, low)
         )
-        new_Z = GraphDiscoveryNew.Z_test(gamma=gamma,cho_factor=(c, low))
-        accept = acceptation_logic(noise=new_noise, Z=new_Z)
-        printer(f"ancestors : {new_modes}\n n/(n+s)={new_noise:.2f}, Z={new_Z:.2f}")
+        new_Z_low,new_Z_high = GraphDiscoveryNew.Z_test(gamma=gamma,cho_factor=(c, low))
+        accept = acceptation_logic(noise=new_noise, Z=new_Z_low)
+        printer(f"ancestors : {new_modes}\n n/(n+s)={new_noise:.2f}, Z={new_Z_low:.2f}")
         printer(f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
 
         if accept:
@@ -187,6 +226,40 @@ class GraphDiscoveryNew:
                 )
         else:
             return yb, active_modes
+    
+    def iterative_ancestor_finder(
+        ga, modes, gamma,yb, acceptation_logic, printer
+    ):
+        noises=[]
+        Zs=[]
+        active_modes=modes
+        active_yb=yb
+        decision_modes=modes
+        accept=True
+        while active_modes.node_number>1:
+            energy = -onp.dot(ga, active_yb)
+            activations = {
+                name: onp.dot(active_yb, active_modes.get_K_of_name(name) @ active_yb) / energy
+                for name in active_modes.active_names
+            }
+            minimum_activation_name=min(activations, key=activations.get)
+            active_modes = active_modes.delete_node_by_name(minimum_activation_name)
+            K = active_modes.get_K()
+            K += gamma * onp.eye(K.shape[0])
+            c, low = scipy.linalg.cho_factor(K)
+            active_yb, noise = GraphDiscoveryNew.solve_variationnal(
+                ga, gamma=gamma, cho_factor=(c, low)
+            )
+            Z_low,Z_high = GraphDiscoveryNew.Z_test(gamma=gamma,cho_factor=(c, low))
+            noises.append(noise)
+            Zs.append((Z_low,Z_high))
+            accept = accept and acceptation_logic(noise=noise, Z=Z_low)
+            if accept:
+                decision_modes=active_modes
+            printer(f"ancestors : {active_modes}\n n/(n+s)={noise:.2f}, Z={Z_low:.2f}")
+            printer(f'decision : {"refused"*int(not(accept))+"accepted"*int(accept)}')
+        return decision_modes, noises, Zs
+
 
     def find_gamma(K, which, Y, tol=1e-10):
         
@@ -195,9 +268,9 @@ class GraphDiscoveryNew:
             selected_eigenvalues = eigenvalues < tol
             residuals=(eigenvectors[:,selected_eigenvalues]@(eigenvectors[:,selected_eigenvalues].T))@Y
             gamma=onp.linalg.norm(residuals)
-            print(f'gamma through residuals: {gamma}')
-            print(f'mean of eigenvalues: {onp.mean(eigenvalues)}')
-            print(f'geo-mean of eigenvalues: {onp.exp(onp.mean(onp.log(onp.maximum(1e-15,eigenvalues))))}')
+            #print(f'gamma through residuals: {gamma}')
+            #print(f'mean of eigenvalues: {onp.mean(eigenvalues)}')
+            #print(f'geo-mean of eigenvalues: {onp.exp(onp.mean(onp.log(onp.maximum(1e-15,eigenvalues))))}')
             return gamma
 
         #eigenvalues = eigenvalues[eigenvalues > tol]
@@ -211,7 +284,7 @@ class GraphDiscoveryNew:
             method="nelder-mead",
             options={"xatol": 1e-8, "disp": False},
         )
-        plt.figure()
+        '''plt.figure()
         plt.plot([k for k in range(len(eigenvalues))],eigenvalues,'o')
         plt.yscale('log')
         plt.show()
@@ -219,7 +292,7 @@ class GraphDiscoveryNew:
         plt.plot(onp.logspace(-9,3,100),[var(onp.log(gamma)) for gamma in onp.logspace(-9,3,100)])
         plt.xscale('log')
         plt.show()
-        print('gamma through variance: ',onp.exp(res.x[0]))
+        print('gamma through variance: ',onp.exp(res.x[0]))'''
         return onp.exp(res.x[0])
 
     def plot_graph(self, type_label=True):
