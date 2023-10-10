@@ -7,3 +7,4 @@ google_vaccination.csv
 .DS_Store
 *.pyc
 .vscode/settings.json
+*.pyc
