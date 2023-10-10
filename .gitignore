@@ -8,3 +8,6 @@ google_vaccination.csv
 *.pyc
 .vscode/settings.json
 *.pyc
+__pycache__/decision.cpython-311.pyc
+__pycache__/Modes.cpython-311.pyc
+__pycache__/newGraphDiscovery.cpython-311.pyc
