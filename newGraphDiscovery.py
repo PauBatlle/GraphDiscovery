@@ -51,7 +51,7 @@ class GraphDiscoveryNew:
         active_modes = self.modes.delete_node_by_name(name)
         if self.possible_edges is not None:
             for possible_name in active_modes.names:
-                if possible_name not in self.possible_edges.predecessors(name):
+                if possible_name not in self.possible_edges.predecessors(name) and possible_name!=name:
                     active_modes = active_modes.delete_node_by_name(possible_name)
 
 
@@ -63,7 +63,7 @@ class GraphDiscoveryNew:
         for which in active_modes.matrices_names:
             K = active_modes.get_K(which)
             if gamma == "auto":
-                gamma_used = GraphDiscoveryNew.find_gamma(K=K, which=which, Y=ga,tol=1e-10)
+                gamma_used = GraphDiscoveryNew.find_gamma(K=K, interpolatory=active_modes.is_interpolatory(which) , Y=ga,tol=1e-10)
                 if gamma_used < gamma_min:
                     self.print_func(
                         f"""gamma too small for set tolerance({gamma_used:.2e}), using {gamma_min:.2e} instead\nThis can either mean that the noise is very low or there is an issue in the automatic determination of gamma. To change the tolerance, change parameter gamma_min"""
@@ -102,11 +102,12 @@ class GraphDiscoveryNew:
             active_modes,
             printer=self.print_func,
             early_stopping=early_stopping,
+            auto_gamma=gamma,
+            gamma_min=gamma_min,
             **kernel_performance[which]
         )
         ancestor_modes=choose_mode(list_of_modes,noises,Zs)
         #plot evolution of noise and Z, and in second plot on the side evolution of Z_{k+1}-Z_k
-        #it should be two subplots side by side
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))
         axes[0].plot(list(range(1,1+len(noises)))[::-1],noises,label='noise')
         axes[0].plot(list(range(1,1+len(noises)))[::-1],[z[0] for z in Zs],label='5% quantile of random noise')
@@ -130,18 +131,18 @@ class GraphDiscoveryNew:
         fig.tight_layout()
         plt.show()
 
-
+        signal=1-noises[-ancestor_modes.node_number]
 
         self.print_func("ancestors after pruning: ", ancestor_modes, "\n")
         for used,ancestor_name in zip(ancestor_modes.used,ancestor_modes.names):
             if used:
-                self.G.add_edge(ancestor_name, name, type=which)
-
+                self.G.add_edge(ancestor_name, name, type=which,signal=signal)
+        
 
 
     
     def iterative_ancestor_finder(
-        ga, modes, gamma,yb, noise,Z, printer,early_stopping
+        ga, modes, gamma,yb, noise,Z, printer,early_stopping,auto_gamma,gamma_min
     ):
         noises=[noise]
         Zs=[Z]
@@ -158,6 +159,9 @@ class GraphDiscoveryNew:
             active_modes = active_modes.delete_node_by_name(minimum_activation_name)
             list_of_modes.append(active_modes)
             K = active_modes.get_K()
+            if auto_gamma and active_modes.is_interpolatory():
+                gamma = GraphDiscoveryNew.find_gamma(K=K, interpolatory=active_modes.is_interpolatory(), Y=ga,tol=1e-10)
+                gamma=max(gamma,gamma_min)
             K += gamma * onp.eye(K.shape[0])
             c, low = scipy.linalg.cho_factor(K)
             active_yb, noise = GraphDiscoveryNew.solve_variationnal(
@@ -170,14 +174,14 @@ class GraphDiscoveryNew:
         return list_of_modes, noises, Zs
 
 
-    def find_gamma(K, which, Y ,tol=1e-10):
+    def find_gamma(K, interpolatory, Y ,tol=1e-10):
         
         eigenvalues,eigenvectors=onp.linalg.eigh(K)
         #plt.figure()
         #plt.plot(eigenvalues,[k/eigenvalues.shape[0] for k in range(eigenvalues.shape[0])])
         #plt.xscale('log')
         #plt.show()
-        if which != "gaussian":
+        if not interpolatory:
             
             selected_eigenvalues = eigenvalues < tol
             
@@ -198,7 +202,7 @@ class GraphDiscoveryNew:
         return gamma"""
         res = minimize(
             var,
-            onp.array([-onp.log(onp.mean(eigenvalues))]),
+            onp.array([onp.log(onp.mean(eigenvalues))]),
             method="nelder-mead",
             options={"xatol": 1e-8, "disp": False},
         )
