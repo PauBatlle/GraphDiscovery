@@ -12,7 +12,8 @@ class ModeContainer:
         matrices,
         matrices_types,
         matrices_names,
-        variables_names,
+        interpolatory_list,
+        variable_names,
         beta,
         level=None,
         used=None
@@ -20,10 +21,11 @@ class ModeContainer:
         self.constant_mat = onp.ones(matrices[0].shape[-2:])
         self.matrices=matrices
         self.matrices_types=matrices_types
-        self.names = variables_names
+        self.names = variable_names
         self.beta = beta
         self.level = level
         self.matrices_names = matrices_names
+        self.interpolatory_list=interpolatory_list
         if level is None:
             self.level = onp.ones_like(matrices_names)
         else:
@@ -41,6 +43,13 @@ class ModeContainer:
     def active_names(self):
         return self.names[self.used]
     
+    def is_interpolatory(self,chosen_level=None):
+        level=self.get_level(chosen_level)
+        res=False
+        for li,is_interpolatory_bool in zip(level,self.interpolatory_list):
+            res=res or (is_interpolatory_bool and li==1)
+        return res
+    
     def get_index_of_name(self, target_name):
         for i, name in enumerate(self.names):
             if name == target_name:
@@ -48,7 +57,7 @@ class ModeContainer:
                     return i
                 else:
                     break
-        raise f"{target_name} is not in the modes' list of active namesnames"
+        raise Exception(f"{target_name} is not in the modes' list of active names {self}")
 
     def delete_node_by_name(self, target_name):
         return self.delete_node(self.get_index_of_name(target_name))
@@ -58,12 +67,13 @@ class ModeContainer:
         assert new_used[index]
         new_used[index]=False
         return ModeContainer(
-            self.matrices,
-            self.matrices_types,
-            self.matrices_names,
-            self.names,
-            self.beta,
-            self.level,
+            matrices=self.matrices,
+            matrices_types=self.matrices_types,
+            matrices_names=self.matrices_names,
+            interpolatory_list=self.interpolatory_list,
+            variable_names=self.names,
+            beta=self.beta,
+            level=self.level,
             used=new_used
         )
 
@@ -143,6 +153,7 @@ class ModeContainer:
         matrices=[]
         matrices_types=[]
         matrices_names=[]
+        interpolatory_list=[]
         beta=[]
         for arg in args:
             assert arg['type'] in ['individual','combinatorial','pairwise']
@@ -153,24 +164,23 @@ class ModeContainer:
                 if arg['type']=='pairwise':
                     assert arg['matrix'].shape==(len(variable_names),len(variable_names),X.shape[1],X.shape[1])
                 matrices.append(arg['matrix'])
-                matrices_types.append(arg['type'])
-                matrices_names.append(arg['name'])
-                beta.append(arg['beta'])
             else:
                 matrix=ModeContainer.build_matrix(X,**arg)
                 matrices.append(matrix)
-                matrices_types.append(arg['type'])
-                matrices_names.append(arg['name'])
-                beta.append(arg['beta'])
+            matrices_types.append(arg['type'])
+            matrices_names.append(arg['name'])
+            interpolatory_list.append(arg['interpolatory'])
+            beta.append(arg['beta'])
             if arg['type']=='pairwise':
                 #in the inner workings of the code, off-diagonal matrices are counted twice
                 matrices[-1]=matrices[-1] * ((1 + onp.eye(matrices[-1].shape[0]))[:, :, None, None]/2)
         return ModeContainer(
-            matrices,
-            matrices_types,
-            matrices_names,
-            variable_names,
-            onp.array(beta)
+            matrices=matrices,
+            matrices_types=matrices_types,
+            matrices_names=matrices_names,
+            variable_names=variable_names,
+            interpolatory_list=interpolatory_list,
+            beta=onp.array(beta)
         )
     
 
