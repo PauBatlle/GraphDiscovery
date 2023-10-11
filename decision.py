@@ -40,7 +40,7 @@ class KernelChooser():
             current=None
             noise=2
             for kernel,vals in kernel_choice_dict.items():
-                if vals['noise']<noise and vals['noise']<vals['Z']:
+                if vals['noise']<noise and vals['noise']<vals['Z'][0]:
                     current=kernel
                     noise=vals['noise']
             return current
