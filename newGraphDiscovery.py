@@ -175,46 +175,23 @@ class GraphDiscoveryNew:
 
 
     def find_gamma(K, interpolatory, Y ,tol=1e-10):
-        
         eigenvalues,eigenvectors=onp.linalg.eigh(K)
-        #plt.figure()
-        #plt.plot(eigenvalues,[k/eigenvalues.shape[0] for k in range(eigenvalues.shape[0])])
-        #plt.xscale('log')
-        #plt.show()
         if not interpolatory:
             
             selected_eigenvalues = eigenvalues < tol
             
             residuals=(eigenvectors[:,selected_eigenvalues]@(eigenvectors[:,selected_eigenvalues].T))@Y
             gamma=onp.linalg.norm(residuals)
-            #print(f'gamma through residuals: {gamma}')
-            #print(f'mean of eigenvalues: {onp.mean(eigenvalues)}')
-            #print(f'geo-mean of eigenvalues: {onp.exp(onp.mean(onp.log(onp.maximum(1e-15,eigenvalues))))}')
             return gamma
-        print(f'what about median ? {onp.median(eigenvalues)}')
-        #eigenvalues = eigenvalues[eigenvalues > tol]
 
         def var(gamma_log):
             return -onp.var(1 / (1 + eigenvalues * onp.exp(-gamma_log)))
-        """test_gammas=onp.logspace(gamma_log_range[0],gamma_log_range[1],5000)
-        vars=[var(onp.log(gamma)) for gamma in test_gammas]
-        gamma=test_gammas[onp.argmin(vars)]
-        return gamma"""
         res = minimize(
             var,
             onp.array([onp.log(onp.mean(eigenvalues))]),
             method="nelder-mead",
             options={"xatol": 1e-8, "disp": False},
         )
-        '''plt.figure()
-        plt.plot([k for k in range(len(eigenvalues))],eigenvalues,'o')
-        plt.yscale('log')
-        plt.show()
-        plt.figure()
-        plt.plot(onp.logspace(-9,3,100),[var(onp.log(gamma)) for gamma in onp.logspace(-9,3,100)])
-        plt.xscale('log')
-        plt.show()
-        print('gamma through variance: ',onp.exp(res.x[0]))'''
         return onp.exp(res.x[0])
 
     def plot_graph(self, type_label=True):
