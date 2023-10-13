@@ -196,7 +196,7 @@ class GraphDiscoveryNew:
 
     def plot_graph(self, type_label=True):
         pos = nx.kamada_kawai_layout(self.G, self.G.nodes())
-        nx.draw(
+        nx.draw_networkx(
             self.G, with_labels=True, pos=pos, node_size=600, font_size=8, alpha=0.6
         )
         if type_label:
