@@ -181,7 +181,7 @@ class GraphDiscoveryNew:
             selected_eigenvalues = eigenvalues < tol
             
             residuals=(eigenvectors[:,selected_eigenvalues]@(eigenvectors[:,selected_eigenvalues].T))@Y
-            gamma=onp.linalg.norm(residuals)
+            gamma=onp.linalg.norm(residuals)**2
             return gamma
 
         def var(gamma_log):
