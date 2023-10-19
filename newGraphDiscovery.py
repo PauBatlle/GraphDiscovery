@@ -195,7 +195,7 @@ class GraphDiscoveryNew:
         # if optimization fails, use median eigenvalues
         if res.success == False:
             gamma = onp.median(eigenvalues)
-        else
+        else:
             gamma = onp.res(res.x[0])
         return gamma
 
