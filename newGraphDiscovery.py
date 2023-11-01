@@ -8,6 +8,7 @@ import scipy.linalg
 
 from Modes import ModeContainer
 from decision import KernelChooser, ModeChooser, EarlyStopping
+from plotting_help import partition_layout
 
 
 class GraphDiscoveryNew:
@@ -22,6 +23,23 @@ class GraphDiscoveryNew:
         self.possible_edges = possible_edges
         self.G = nx.DiGraph()
         self.G.add_nodes_from(names)
+    
+    def prepare_new_graph_with_clusters(self, clusters):
+        new_graph=GraphDiscoveryNew(self.X, self.names, self.modes, self.possible_edges, verbose=False)
+        new_graph.print_func=self.print_func
+        new_graph.modes.assign_clusters(clusters)
+        new_graph.G=self.G.copy()
+        edges_to_remove=[]
+        flattened_clusters=[(i,item) for i,sublist in enumerate(clusters) for item in sublist]
+        for i,(cluster_index,node) in enumerate(flattened_clusters):
+            other_nodes=list(set([node for j,node in flattened_clusters if j>i])-set(clusters[cluster_index]))
+            for other_node in other_nodes:
+                edges_to_remove.append((node,other_node))
+        new_graph.G.remove_edges_from(edges_to_remove)
+        return new_graph
+                
+
+
 
     def solve_variationnal(ga, gamma, cho_factor):
         yb = -scipy.linalg.cho_solve(cho_factor, ga)
@@ -175,7 +193,7 @@ class GraphDiscoveryNew:
         signal = 1 - noises[-ancestor_modes.node_number]
 
         self.print_func("ancestors after pruning: ", ancestor_modes, "\n")
-        for used, ancestor_name in zip(ancestor_modes.used, ancestor_modes.names):
+        for ancestor_name,used in ancestor_modes.used.items():
             if used:
                 self.G.add_edge(ancestor_name, name, type=which, signal=signal)
 
@@ -259,11 +277,25 @@ class GraphDiscoveryNew:
 
         return gamma
 
-    def plot_graph(self, type_label=True):
-        pos = nx.kamada_kawai_layout(self.G, self.G.nodes())
-        nx.draw_networkx(
-            self.G, with_labels=True, pos=pos, node_size=600, font_size=8, alpha=0.6
-        )
+    def plot_graph(self, type_label=True,node_size=400,cluster_size=10000,font_size=8):
+        if len(self.modes.clusters)==len(self.names):
+            pos = nx.kamada_kawai_layout(self.G, self.G.nodes())
+            nx.draw_networkx(
+                self.G, with_labels=True, pos=pos, node_size=node_size, font_size=8, alpha=0.6
+            )
+
+
+        cluster_partition={item:i for i,sublist in enumerate(self.modes.clusters) for item in sublist}
+        pos,hypergraph = partition_layout(self.G,cluster_partition)
+        connection_style = "arc3,rad=0"
+        node_sizes=[node_size if (node in self.G) else cluster_size for node in hypergraph.nodes()]
+        nx.draw_networkx_nodes(hypergraph, pos=pos, nodelist=self.G.nodes(), node_size=node_size, alpha=0.6)
+        nx.draw_networkx_edges(hypergraph, pos, node_size=node_sizes, alpha=0.6,edgelist=[e for e in hypergraph.edges if not hypergraph.edges[e]['intra_cluster']],style='dashed',connectionstyle=connection_style)
+        nx.draw_networkx_edges(hypergraph, pos, node_size=node_size, alpha=0.6,edgelist=[e for e in hypergraph.edges if  hypergraph.edges[e]['intra_cluster']],connectionstyle=connection_style)
+        nx.draw_networkx_nodes(hypergraph, pos, nodelist=set(cluster_partition.values()), node_color="None",node_size=cluster_size,edgecolors="red")
+        
+        nx.draw_networkx_labels(hypergraph, pos, labels={node:node for node in self.G.nodes()},font_size=font_size)
+        
         if type_label:
             nx.draw_networkx_edge_labels(
                 self.G, pos, edge_labels=nx.get_edge_attributes(self.G, "type")
