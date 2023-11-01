@@ -15,17 +15,21 @@ class ModeContainer:
         interpolatory_list,
         variable_names,
         beta,
+        clusters=None,
         level=None,
         used=None
     ) -> None:
         self.constant_mat = onp.ones(matrices[0].shape[-2:])
         self.matrices=matrices
         self.matrices_types=matrices_types
+        assert len(list(variable_names))==len(set(list(variable_names)))
         self.names = variable_names
+        self.name_to_index = {name: i for i, name in enumerate(self.names)}
         self.beta = beta
         self.level = level
         self.matrices_names = matrices_names
         self.interpolatory_list=interpolatory_list
+        self.assign_clusters(clusters)
         if level is None:
             self.level = onp.ones_like(matrices_names)
         else:
@@ -33,16 +37,42 @@ class ModeContainer:
         if used is not None:
             self.used = used
         else:
-            self.used = onp.array([True]*self.names.shape[0])
+            self.used = {name:True for name in self.names}
+        self.used_list=onp.array([self.used[name] for name in self.names])
 
     @property
     def node_number(self):
-        return onp.sum(self.used)
+        return len(self.active_clusters)
     
     @property
     def active_names(self):
-        return self.names[self.used]
+        return self.names[self.used_list]
     
+    def assign_clusters(self,clusters):
+        '''clusters must be a partition of the array matrices_names'''
+        if clusters is None:
+            self.clusters=list(self.names[:,None])
+        else:
+            clusters_list=[name for cluster in clusters for name in cluster]
+            assert len(clusters_list)==len(set(clusters_list))
+            assert len(clusters_list)==len(self.names)
+            assert set(clusters_list).issubset(set(list(self.names)))
+            self.clusters=clusters
+    
+    @property
+    def active_clusters(self):
+        res=[]
+        for cluster in self.clusters:
+            if self.cluster_is_active(cluster):
+                res.append(cluster)
+        return res
+    
+    def cluster_is_active(self,cluster):
+        cluster_usage=[self.used[name] for name in cluster]
+        #assert all elements in cluster_usage are the same
+        assert len(set(cluster_usage))==1, f'all elements in cluster {"/".join(cluster)} must be either active or inactive at the same time'
+        return cluster_usage[0]
+
     def is_interpolatory(self,chosen_level=None):
         level=self.get_level(chosen_level)
         res=False
@@ -51,21 +81,39 @@ class ModeContainer:
         return res
     
     def get_index_of_name(self, target_name):
-        for i, name in enumerate(self.names):
-            if name == target_name:
-                if self.used[i]:
-                    return i
-                else:
-                    break
-        raise Exception(f"{target_name} is not in the modes' list of active names {self}")
-
-    def delete_node_by_name(self, target_name):
-        return self.delete_node(self.get_index_of_name(target_name))
+        try:
+            assert self.used[target_name]
+        except KeyError or AssertionError:
+            raise Exception(f"{target_name} is not in the modes' list of active names {self}")
+        return self.name_to_index[target_name]
+    
+    def get_cluster_of_node_name(self, target_name):
+        for cluster in self.clusters:
+            if target_name in cluster:
+                return cluster
+        raise Exception(f"{target_name} was not in the modes' clusters {self.clusters}")
+    
+    def get_cluster_by_name(self,cluster_name):
+        for cluster in self.clusters:
+            if cluster_name=="/".join(cluster):
+                return cluster
+        raise Exception(f"{cluster_name} was not in the modes' clusters {self.clusters}")
+    
 
     def delete_node(self, index):
+        return self.delete_node_by_name(self.names[index])
+
+    def delete_node_by_name(self, target_name):
+        return self.delete_cluster(self.get_cluster_of_node_name(target_name))
+    
+    def delete_cluster_by_name(self,cluster_name):
+        return self.delete_cluster(self.get_cluster_by_name(cluster_name))
+    
+    def delete_cluster(self,cluster):
         new_used=self.used.copy()
-        assert new_used[index]
-        new_used[index]=False
+        for name in cluster:
+            assert self.used[name]
+            new_used[name]=False
         return ModeContainer(
             matrices=self.matrices,
             matrices_types=self.matrices_types,
@@ -74,7 +122,8 @@ class ModeContainer:
             variable_names=self.names,
             beta=self.beta,
             level=self.level,
-            used=new_used
+            used=new_used,
+            clusters=self.clusters
         )
 
     def get_level(self, chosen_level):
@@ -98,24 +147,45 @@ class ModeContainer:
         assert chosen_level is not None
         self.level = self.get_level(chosen_level)
 
+    def prod_and_sum(matrix,mask):
+        return onp.prod(onp.add(matrix,onp.ones_like(matrix),where=mask[:,None,None]),axis=0,where=mask[:,None,None])
+
     def sum_a_matrix(matrix,matrix_type,used):
         if matrix_type=='individual':
             return onp.sum(matrix,axis=0,where=used[:,None,None])
         if matrix_type=='pairwise':
-            return onp.sum(onp.sum(matrix,axis=0,where=used[:,None,None,None]),axis=0,where=used[:,None,None])
+            used_2D=used[:,None]*used[None,:]
+            return onp.sum(matrix,axis=(0,1),where=used_2D[:,:,None,None])
         if matrix_type=='combinatorial':
-            return onp.prod(matrix+onp.ones_like(matrix),axis=0,where=used[:,None,None])
+            return ModeContainer.prod_and_sum(matrix,used)
         raise f"Unknown matrix type {matrix_type}"
     
     def sum_a_matrix_of_index(matrix,matrix_type,used,index):
         if matrix_type=='individual':
             return matrix[index]
         if matrix_type=='pairwise':
-            return 2 * onp.sum(matrix[index], axis=0,where=used[:,None,None])- matrix[index, index]
+            mask=onp.zeros(matrix.shape[0], dtype=bool)
+            mask[index]=True
+            used_2D=mask[:,None]*used[None,:] + used[:,None]*mask[None,:]
+            return onp.sum(matrix, axis=(0,1),where=used_2D[:,:,None,None])
         if matrix_type=='combinatorial':
             used_for_prod = used.copy()
             used_for_prod[index]=False
-            return matrix[index]*onp.prod(matrix+onp.ones_like(matrix),axis=0,where=used_for_prod[:,None,None])
+            return matrix[index]*ModeContainer.prod_and_sum(matrix,used_for_prod)
+        raise f"Unknown matrix type {matrix_type}"
+    
+    def sum_a_matrix_of_indexes(matrix,matrix_type,used,indexes):
+        mask=onp.zeros(matrix.shape[0], dtype=bool)
+        mask[indexes]=True
+        if matrix_type=='individual':
+            return onp.sum(matrix, axis=0,where=mask[:,None,None])
+        if matrix_type=='pairwise':
+            used_2D=mask[:,None]*used[None,:] + used[:,None]*mask[None,:]
+            return onp.sum(matrix, axis=(0,1),where=used_2D[:,:,None,None])
+        if matrix_type=='combinatorial':
+            used_for_prod = used.copy()
+            used_for_prod[indexes]=False
+            return (ModeContainer.prod_and_sum(matrix,mask)-1)*ModeContainer.prod_and_sum(matrix,used_for_prod)
         raise f"Unknown matrix type {matrix_type}"
 
     def get_K(self, chosen_level=None):
@@ -124,29 +194,46 @@ class ModeContainer:
         K+=self.constant_mat
         for i, matrix in enumerate(self.matrices):
             if coeff[i]!=0:
-                K+=coeff[i]*ModeContainer.sum_a_matrix(matrix,self.matrices_types[i],self.used)
+                K+=coeff[i]*ModeContainer.sum_a_matrix(matrix,self.matrices_types[i],self.used_list)
         return K
     
     def get_K_of_name(self, name):
         return self.get_K_of_index(self.get_index_of_name(name))
 
     def get_K_of_index(self, index):
-        assert self.used[index]
+        assert self.used_list[index]
         coeff = self.beta * self.level
         res = onp.zeros_like(self.constant_mat)
         for i, matrix in enumerate(self.matrices):
-            res+=coeff[i]*ModeContainer.sum_a_matrix_of_index(matrix,self.matrices_types[i],self.used,index)
+            res+=coeff[i]*ModeContainer.sum_a_matrix_of_index(matrix,self.matrices_types[i],self.used_list,index)
+        return res
+    
+    def get_K_of_cluster(self,cluster):
+        if len(cluster)==1:
+            return self.get_K_of_name(cluster[0])
+        assert self.cluster_is_active(cluster)
+        indexes=[self.get_index_of_name(name) for name in cluster]
+        coeff = self.beta * self.level
+        res = onp.zeros_like(self.constant_mat)
+        for i, matrix in enumerate(self.matrices):
+            res+=coeff[i]*ModeContainer.sum_a_matrix_of_indexes(matrix,self.matrices_types[i],self.used_list,indexes)
         return res
 
     def get_K_without_index(self, index):
-        assert self.used[index]
+        assert self.used_list[index]
         return self.delete_node(index).get_K()
     
     def get_K_without_name(self, name):
-        return self.get_K_without_index(self.get_index_of_name(name))
+        assert self.used[name]
+        return self.delete_node_by_name(name).get_K()
+    
+    def get_K_without_cluster(self,cluster):
+        assert self.cluster_is_active(cluster)
+        return self.delete_cluster(cluster).get_K()
 
     def __repr__(self) -> str:
-        return list(self.active_names).__repr__()
+        res=['/'.join(cluster) for cluster in self.clusters]
+        return res.__repr__()
     
     def make_container(X,variable_names,*args):
         assert X.shape[0]==len(variable_names)
@@ -173,7 +260,7 @@ class ModeContainer:
             beta.append(arg['beta'])
             if arg['type']=='pairwise':
                 #in the inner workings of the code, off-diagonal matrices are counted twice
-                matrices[-1]=matrices[-1] * ((1 + onp.eye(matrices[-1].shape[0]))[:, :, None, None]/2)
+                matrices[-1][onp.triu_indices(matrices[-1].shape[0], k = 1)]=0
         return ModeContainer(
             matrices=matrices,
             matrices_types=matrices_types,
@@ -195,7 +282,8 @@ class ModeContainer:
             if which=='quadratic':
                 assert kwargs['type']=='pairwise', "Quadratic kernel is only available for pairwise matrices"
                 linear_mat = onp.expand_dims(X, -1) * onp.expand_dims(X, 1)
-                return onp.expand_dims(linear_mat, 0) * onp.expand_dims(linear_mat, 1)
+                quadratic_mat= onp.expand_dims(linear_mat, 0) * onp.expand_dims(linear_mat, 1)
+                return quadratic_mat
             if which=='gaussian':
                 assert kwargs['type']=='combinatorial', "Gaussian kernel is only available for combinatorial matrices"
                 try:
@@ -221,7 +309,7 @@ class ModeContainer:
             if kwargs['type']=='pairwise':
                 res=onp.zeros((X.shape[0],X.shape[0],X.shape[1],X.shape[1]))
                 for i,col1 in enumerate(X):
-                    for j,col2 in enumerate(X):
+                    for j,col2 in enumerate(X[:i+1]):
                         data=onp.stack([col1,col2],axis=1)
                         res[i,j,:,:]=scipy_kernel(data)
                 return res
