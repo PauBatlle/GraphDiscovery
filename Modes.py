@@ -232,7 +232,7 @@ class ModeContainer:
         return self.delete_cluster(cluster).get_K()
 
     def __repr__(self) -> str:
-        res=['/'.join(cluster) for cluster in self.clusters]
+        res=['/'.join(cluster) for cluster in self.active_clusters]
         return res.__repr__()
     
     def make_container(X,variable_names,*args):
