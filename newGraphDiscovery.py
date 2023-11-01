@@ -192,7 +192,12 @@ class GraphDiscoveryNew:
             method="nelder-mead",
             options={"xatol": 1e-8, "disp": False},
         )
-        return onp.exp(res.x[0])
+        # if optimization fails, use median eigenvalues
+        if res.success == False:
+            gamma = onp.median(eigenvalues)
+        else:
+            gamma = onp.res(res.x[0])
+        return gamma
 
     def plot_graph(self, type_label=True):
         pos = nx.kamada_kawai_layout(self.G, self.G.nodes())

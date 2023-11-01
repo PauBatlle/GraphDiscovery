@@ -11,3 +11,6 @@ google_vaccination.csv
 __pycache__/decision.cpython-311.pyc
 __pycache__/Modes.cpython-311.pyc
 __pycache__/newGraphDiscovery.cpython-311.pyc
+*.data
+*.pdf
+.ipynb_checkpoints/*
