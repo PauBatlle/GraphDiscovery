@@ -8,7 +8,7 @@ import scipy.linalg
 
 from Modes import ModeContainer
 from decision import KernelChooser, ModeChooser, EarlyStopping
-from plotting_help import partition_layout
+from plotting_help import partition_layout, plot_noise_evolution
 
 
 class GraphDiscoveryNew:
@@ -23,23 +23,27 @@ class GraphDiscoveryNew:
         self.possible_edges = possible_edges
         self.G = nx.DiGraph()
         self.G.add_nodes_from(names)
-    
+
     def prepare_new_graph_with_clusters(self, clusters):
-        new_graph=GraphDiscoveryNew(self.X, self.names, self.modes, self.possible_edges, verbose=False)
-        new_graph.print_func=self.print_func
+        new_graph = GraphDiscoveryNew(
+            self.X, self.names, self.modes, self.possible_edges, verbose=False
+        )
+        new_graph.print_func = self.print_func
         new_graph.modes.assign_clusters(clusters)
-        new_graph.G=self.G.copy()
-        edges_to_remove=[]
-        flattened_clusters=[(i,item) for i,sublist in enumerate(clusters) for item in sublist]
-        for i,(cluster_index,node) in enumerate(flattened_clusters):
-            other_nodes=list(set([node for j,node in flattened_clusters if j>i])-set(clusters[cluster_index]))
+        new_graph.G = self.G.copy()
+        edges_to_remove = []
+        flattened_clusters = [
+            (i, item) for i, sublist in enumerate(clusters) for item in sublist
+        ]
+        for i, (cluster_index, node) in enumerate(flattened_clusters):
+            other_nodes = list(
+                set([node for j, node in flattened_clusters if j > i])
+                - set(clusters[cluster_index])
+            )
             for other_node in other_nodes:
-                edges_to_remove.append((node,other_node))
+                edges_to_remove.append((node, other_node))
         new_graph.G.remove_edges_from(edges_to_remove)
         return new_graph
-                
-
-
 
     def solve_variationnal(ga, gamma, cho_factor):
         yb = -scipy.linalg.cho_solve(cho_factor, ga)
@@ -135,65 +139,18 @@ class GraphDiscoveryNew:
         ancestor_modes = choose_mode(list_of_modes, noises, Zs)
         # plot evolution of noise and Z, and in second plot on the side evolution of Z_{k+1}-Z_k
         ancestor_number = [mode.node_number for mode in list_of_modes]
-        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))
-        axes[0].plot(ancestor_number, noises, label="noise")
-        axes[0].plot(
+        fig, axes = plot_noise_evolution(
             ancestor_number,
-            [z[0] for z in Zs],
-            label="5% quantile of random noise",
+            noises,
+            Zs,
+            ancestor_modes,
         )
-        axes[0].plot(
-            ancestor_number,
-            [z[1] for z in Zs],
-            label="95% quantile of random noise",
-        )
-        # color in between the two lines above
-        axes[0].fill_between(
-            ancestor_number,
-            [z[0] for z in Zs],
-            [z[1] for z in Zs],
-            alpha=0.2,
-        )
-
-        axes[0].axvline(
-            x=ancestor_modes.node_number,
-            linestyle="--",
-            color="k",
-            label=f"chosen number of ancestors={ancestor_modes.node_number}",
-        )
-        axes[0].set_xlabel("number of ancestors")
-        axes[0].set_ylabel("noise")
-        axes[0].invert_xaxis()
-        axes[0].set_xticks(
-            onp.linspace(len(noises), 1, 6, dtype=onp.int32, endpoint=True)
-        )
-        axes[0].legend()
-        axes[1].plot(
-            ancestor_number,
-            [noises[i + 1] - noises[i] for i in range(len(noises) - 1)]
-            + [1 - noises[-1]],
-            label="noise increment",
-        )
-        axes[1].axvline(
-            x=ancestor_modes.node_number,
-            linestyle="--",
-            color="k",
-            label=f"chosen number of ancestors={ancestor_modes.node_number}",
-        )
-        axes[1].legend()
-        axes[1].set_xlabel("number of ancestors")
-        axes[1].set_ylabel("noise increment")
-        axes[1].invert_xaxis()
-        axes[1].set_xticks(
-            onp.linspace(len(noises), 1, 6, dtype=onp.int32, endpoint=True)
-        )
-        fig.tight_layout()
         plt.show()
 
         signal = 1 - noises[-ancestor_modes.node_number]
 
         self.print_func("ancestors after pruning: ", ancestor_modes, "\n")
-        for ancestor_name,used in ancestor_modes.used.items():
+        for ancestor_name, used in ancestor_modes.used.items():
             if used:
                 self.G.add_edge(ancestor_name, name, type=which, signal=signal)
 
@@ -277,25 +234,69 @@ class GraphDiscoveryNew:
 
         return gamma
 
-    def plot_graph(self, type_label=True,node_size=400,cluster_size=10000,font_size=8):
-        if len(self.modes.clusters)==len(self.names):
+    def plot_graph(
+        self, type_label=True, node_size=400, cluster_size=10000, font_size=8
+    ):
+        if len(self.modes.clusters) == len(self.names):
             pos = nx.kamada_kawai_layout(self.G, self.G.nodes())
             nx.draw_networkx(
-                self.G, with_labels=True, pos=pos, node_size=node_size, font_size=8, alpha=0.6
+                self.G,
+                with_labels=True,
+                pos=pos,
+                node_size=node_size,
+                font_size=8,
+                alpha=0.6,
             )
 
-
-        cluster_partition={item:i for i,sublist in enumerate(self.modes.clusters) for item in sublist}
-        pos,hypergraph = partition_layout(self.G,cluster_partition)
+        cluster_partition = {
+            item: i for i, sublist in enumerate(self.modes.clusters) for item in sublist
+        }
+        pos, hypergraph = partition_layout(self.G, cluster_partition)
         connection_style = "arc3,rad=0"
-        node_sizes=[node_size if (node in self.G) else cluster_size for node in hypergraph.nodes()]
-        nx.draw_networkx_nodes(hypergraph, pos=pos, nodelist=self.G.nodes(), node_size=node_size, alpha=0.6)
-        nx.draw_networkx_edges(hypergraph, pos, node_size=node_sizes, alpha=0.6,edgelist=[e for e in hypergraph.edges if not hypergraph.edges[e]['intra_cluster']],style='dashed',connectionstyle=connection_style)
-        nx.draw_networkx_edges(hypergraph, pos, node_size=node_size, alpha=0.6,edgelist=[e for e in hypergraph.edges if  hypergraph.edges[e]['intra_cluster']],connectionstyle=connection_style)
-        nx.draw_networkx_nodes(hypergraph, pos, nodelist=set(cluster_partition.values()), node_color="None",node_size=cluster_size,edgecolors="red")
-        
-        nx.draw_networkx_labels(hypergraph, pos, labels={node:node for node in self.G.nodes()},font_size=font_size)
-        
+        node_sizes = [
+            node_size if (node in self.G) else cluster_size
+            for node in hypergraph.nodes()
+        ]
+        nx.draw_networkx_nodes(
+            hypergraph, pos=pos, nodelist=self.G.nodes(), node_size=node_size, alpha=0.6
+        )
+        nx.draw_networkx_edges(
+            hypergraph,
+            pos,
+            node_size=node_sizes,
+            alpha=0.6,
+            edgelist=[
+                e for e in hypergraph.edges if not hypergraph.edges[e]["intra_cluster"]
+            ],
+            style="dashed",
+            connectionstyle=connection_style,
+        )
+        nx.draw_networkx_edges(
+            hypergraph,
+            pos,
+            node_size=node_size,
+            alpha=0.6,
+            edgelist=[
+                e for e in hypergraph.edges if hypergraph.edges[e]["intra_cluster"]
+            ],
+            connectionstyle=connection_style,
+        )
+        nx.draw_networkx_nodes(
+            hypergraph,
+            pos,
+            nodelist=set(cluster_partition.values()),
+            node_color="None",
+            node_size=cluster_size,
+            edgecolors="red",
+        )
+
+        nx.draw_networkx_labels(
+            hypergraph,
+            pos,
+            labels={node: node for node in self.G.nodes()},
+            font_size=font_size,
+        )
+
         if type_label:
             nx.draw_networkx_edge_labels(
                 self.G, pos, edge_labels=nx.get_edge_attributes(self.G, "type")
